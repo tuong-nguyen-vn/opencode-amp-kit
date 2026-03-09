@@ -11,8 +11,8 @@ INPUT: Scan report from Phase 1
 
 TASKS:
 1. Use Glob + Read on key directories (src/, packages/, apps/)
-2. Use finder (Amp) / Explore subagent (Claude) "entry point OR main OR index OR app OR server"
-3. Use finder (Amp) / Explore subagent (Claude) for core classes/functions
+2. Use finder "entry point OR main OR index OR app OR server"
+3. Use finder for core classes/functions
 4. Read main entry files to understand bootstrap flow
 
 OUTPUT JSON:
@@ -39,7 +39,7 @@ You are analyzing coding patterns and conventions.
 INPUT: Scan report from Phase 1
 
 TASKS:
-1. Use finder (Amp) / Explore subagent (Claude) "hook OR middleware OR decorator OR handler OR factory"
+1. Use finder "hook OR middleware OR decorator OR handler OR factory"
 2. Read 5-10 representative files to identify naming conventions
 3. Look for error handling patterns (try-catch, Result types, error handlers)
 4. Identify testing patterns (file locations, frameworks, mocking approach)
@@ -82,9 +82,9 @@ You are discovering public interfaces.
 INPUT: Scan report from Phase 1
 
 TASKS:
-1. For APIs: finder (Amp) / Explore subagent (Claude) "route OR endpoint OR router OR controller"
-2. For CLIs: finder (Amp) / Explore subagent (Claude) "command OR subcommand OR argv"
-3. Use finder (Amp) / Explore subagent (Claude) for exported symbols
+1. For APIs: finder "route OR endpoint OR router OR controller"
+2. For CLIs: finder "command OR subcommand OR argv"
+3. Use finder for exported symbols
 4. Read route/command files to document interfaces
 
 OUTPUT JSON:
@@ -127,8 +127,8 @@ INPUT: Scan report from Phase 1
 
 TASKS:
 1. Read package.json/Cargo.toml/go.mod for dependencies
-2. Use finder (Amp) / Explore subagent (Claude) "database OR postgres OR mysql OR mongo OR redis"
-3. Use finder (Amp) / Explore subagent (Claude) "aws OR gcp OR azure OR s3 OR cloudflare"
+2. Use finder "database OR postgres OR mysql OR mongo OR redis"
+3. Use finder "aws OR gcp OR azure OR s3 OR cloudflare"
 4. Look for .env.example or config files for required env vars
 
 OUTPUT JSON:

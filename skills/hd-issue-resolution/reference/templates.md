@@ -149,11 +149,11 @@ Reproducible: Always / Sometimes / Rarely
 3. **Calls**: `<file>:<line>` - `<function>`
 4. **Fails at**: `<file>:<line>` - `<function>`
 
-### Traced with finder (Amp) / Explore subagent (Claude)
+### Traced with finder
 
 ```
-finder / Explore subagent "function definition" → <findings>
-finder / Explore subagent "function references" → <findings>
+finder "function definition" → <findings>
+finder "function references" → <findings>
 ```
 
 ## Recent Changes
@@ -321,7 +321,7 @@ The fix is correct if:
 
 ### Callers of Modified Code
 
-Found via finder (Amp) / Explore subagent (Claude):
+Found via `finder`:
 
 | Caller       | File     | Risk         |
 | ------------ | -------- | ------------ |

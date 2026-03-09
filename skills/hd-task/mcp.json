@@ -1,0 +1,22 @@
+{
+  "linear": {
+    "scope": "user",
+    "description": "Linear issue tracker — read/update issues, manage states, add comments, link PRs",
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@linear/mcp-server"],
+    "env": {
+      "LINEAR_API_KEY": "${LINEAR_API_KEY}"
+    }
+  },
+  "asana": {
+    "scope": "user",
+    "description": "Asana task management — read/update tasks, add comments, search, manage sections",
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@roychri/mcp-server-asana"],
+    "env": {
+      "ASANA_ACCESS_TOKEN": "${ASANA_ACCESS_TOKEN}"
+    }
+  }
+}

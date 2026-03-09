@@ -1,0 +1,21 @@
+{
+  "platform": "clickup",
+  "display_name": "ClickUp",
+  "status": "implemented",
+  "url_pattern": "https://app\\.clickup\\.com/t/([a-zA-Z0-9]+)",
+  "id_group": 1,
+  "mcp_server": null,
+  "mcp_server_name": null,
+  "tools": null,
+  "fallback_script": "scripts/adapters/clickup_fallback.py",
+  "workspace_url_pattern": null,
+  "list_issues": null,
+  "list_cycles": null,
+  "auth": {
+    "type": "env",
+    "key": "CLICKUP_API_TOKEN",
+    "format": "<personal-api-token>",
+    "get_credentials_url": "https://app.clickup.com/settings/apps"
+  },
+  "notes": "Uses ClickUp REST API v2 via Python fallback script. Task IDs are alphanumeric (e.g. abc123xyz). For status listing, the fallback reads the list_id from the task response automatically."
+}

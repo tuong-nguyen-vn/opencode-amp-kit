@@ -49,7 +49,7 @@ Who is this estimate for?
 Your choice (1-2): [2]
 ```
 
-**Save to `plans/YYYYMMDD-<project-slug>/config.md`** using `reference/config-template.md`.
+**Save to `history/YYYYMMDD-<project-slug>/config.md`** using `reference/config-template.md`.
 
 **Reuse:** If `config.md` already exists in project folder, load it and skip prompt.
 
@@ -74,16 +74,16 @@ Reply "done" when finished.
 | Asset Type | Tool | Fallback |
 |------------|------|----------|
 | Image/Screenshot | `look_at` | — |
-| PDF | `look_at` | `skill("pdf")` |
-| DOCX | `skill("docx")` | — |
+| PDF | `look_at` | `skill("hd-docs-parse")` |
+| DOCX | `skill("hd-docs-parse")` | — |
 | Markdown/Text | `Read` | — |
-| URL | `read_web_page` | — |
+| URL | `mcp__exa__crawling_exa` | — |
 
-Copy assets to `plans/YYYYMMDD-<project>/assets/`. Create `assets.md` registry.
+Copy assets to `history/YYYYMMDD-<project>/assets/`. Create `assets.md` registry.
 
 ### 1.3 Create Context File
 
-Save extracted info to `plans/YYYYMMDD-<project>/context.md`:
+Save extracted info to `history/YYYYMMDD-<project>/context.md`:
 
 ```markdown
 # Context: <Project Name>
@@ -127,14 +127,14 @@ Save extracted info to `plans/YYYYMMDD-<project>/context.md`:
 
 | Need | Tool |
 |------|------|
-| Library docs | `skill("docs-seeker")` |
-| Tech comparison | `web_search` |
-| Architecture advice | `Plan` subagent |
-| Similar solutions | `web_search` |
+| Library docs | `mcp__exa__get_code_context_exa` |
+| Tech comparison | `mcp__exa__web_search_exa` |
+| Architecture advice | `oracle` |
+| Similar solutions | `mcp__exa__web_search_exa` |
 
 ### 2.3 Solution Approach
 
-Save to `plans/YYYYMMDD-<project>/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions.
+Save to `history/YYYYMMDD-<project>/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions.
 
 ---
 
@@ -219,7 +219,7 @@ Total = Sum(epic hours) × 1.2 (buffer)
 Duration = Total hours / 40h/week
 ```
 
-Save final report to `plans/YYYYMMDD-<project>/eta.md`.
+Save final report to `history/YYYYMMDD-<project>/eta.md`.
 
 ---
 
@@ -227,22 +227,22 @@ Save final report to `plans/YYYYMMDD-<project>/eta.md`.
 
 | File | Purpose |
 |------|---------|
-| `plans/YYYYMMDD-<project>/config.md` | Audience configuration |
-| `plans/YYYYMMDD-<project>/assets.md` | Asset registry |
-| `plans/YYYYMMDD-<project>/assets/` | Asset copies |
-| `plans/YYYYMMDD-<project>/context.md` | Extracted requirements |
-| `plans/YYYYMMDD-<project>/solution.md` | Tech stack + architecture |
-| `plans/YYYYMMDD-<project>/eta.md` | Final ETA report |
+| `history/YYYYMMDD-<project>/config.md` | Audience configuration |
+| `history/YYYYMMDD-<project>/assets.md` | Asset registry |
+| `history/YYYYMMDD-<project>/assets/` | Asset copies |
+| `history/YYYYMMDD-<project>/context.md` | Extracted requirements |
+| `history/YYYYMMDD-<project>/solution.md` | Tech stack + architecture |
+| `history/YYYYMMDD-<project>/eta.md` | Final ETA report |
 
 ---
 
 ## Reuse Context
 
 ```bash
-ls plans/                                        # List existing projects
-Read plans/YYYYMMDD-<project>/context.md         # Requirements
-Read plans/YYYYMMDD-<project>/solution.md        # Tech decisions
-Read plans/YYYYMMDD-<project>/eta.md             # Previous ETA
+ls history/                                        # List existing projects
+Read history/YYYYMMDD-<project>/context.md         # Requirements
+Read history/YYYYMMDD-<project>/solution.md        # Tech decisions
+Read history/YYYYMMDD-<project>/eta.md             # Previous ETA
 ```
 
 ---

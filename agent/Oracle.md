@@ -5,11 +5,9 @@ model: github-copilot/gpt-5.4
 color: "#8B5CF6"
 tools:
   "*": false
-  find_thread: true
   glob: true
   grep: true
   read: true
-  read_thread: true
 ---
 
 You are the Oracle - an expert AI advisor with advanced reasoning capabilities.

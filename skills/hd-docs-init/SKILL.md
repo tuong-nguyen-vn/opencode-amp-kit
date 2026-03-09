@@ -16,13 +16,13 @@ Bootstrap documentation from codebase analysis. One-time setup for new/undocumen
 REQUEST → SCAN → ANALYZE → GENERATE → REVIEW → APPLY
 ```
 
-| Phase       | Action                            | Tools (Amp / Claude)                                                          |
-| ----------- | --------------------------------- | ----------------------------------------------------------------------------- |
-| 1. Scan     | Discover codebase structure       | `finder` (Amp) / `Explore` subagent (Claude)                                 |
-| 2. Analyze  | Understand architecture, patterns | `Task` (4 parallel agents) + `oracle` (Amp) / `Plan` (Claude) for synthesis  |
-| 3. Generate | Create doc drafts                 | `Task` (parallel per doc type)                                                |
-| 4. Review   | Validate against code             | `Task` (`finder` (Amp) / `Explore` subagent (Claude))                        |
-| 5. Apply    | Write docs with diagrams          | `create_file` / `edit_file` (Amp) / `Write` / `Edit` (Claude)               |
+| Phase       | Action                            | Tools                                                          |
+| ----------- | --------------------------------- | -------------------------------------------------------------- |
+| 1. Scan     | Discover codebase structure       | `finder`                                                       |
+| 2. Analyze  | Understand architecture, patterns | `Task` (4 parallel agents) + `oracle` for synthesis            |
+| 3. Generate | Create doc drafts                 | `Task` (parallel per doc type)                                 |
+| 4. Review   | Validate against code             | `Task` (`finder`)                                              |
+| 5. Apply    | Write docs with diagrams          | `Write` / `Edit`                                               |
 
 ## Phase 0: Request
 
@@ -41,15 +41,10 @@ Use `DOCS_LANGUAGE` when generating the Language Policy section in AGENTS.md.
 ### 1.1 Get Project Structure
 
 ```bash
-# Amp: use finder to understand structure
+# Use finder to understand structure
 finder "project structure and key directories"
 finder "existing documentation files"
 finder "package.json or Cargo.toml or go.mod or pyproject.toml"
-
-# Claude: use Explore subagent to understand structure
-Explore subagent "project structure and key directories"
-Explore subagent "existing documentation files"
-Explore subagent "package.json or Cargo.toml or go.mod or pyproject.toml"
 ```
 
 ### 1.2 Identify Project Type
@@ -90,7 +85,7 @@ Save to `history/docs-init/scan.md`:
 <type> (monorepo / single-package / multi-service)
 
 ## Structure
-<tree output from finder (Amp) / Explore subagent (Claude)>
+<tree output from finder>
 
 ## Key Directories
 | Directory | Purpose |
@@ -136,9 +131,9 @@ Task() → Agent D: External integrations (DBs, APIs, services)
 **Architecture Agent:**
 ```
 Understand the scan report and explore the codebase:
-1. finder (Amp) / Explore subagent (Claude) to understand key directories structure
-2. finder (Amp) / Explore subagent (Claude) "entry point OR main OR app OR server"
-3. finder (Amp) / Explore subagent (Claude) for core classes/functions
+1. finder to understand key directories structure
+2. finder "entry point OR main OR app OR server"
+3. finder for core classes/functions
 
 Return:
 {
@@ -152,7 +147,7 @@ Return:
 **Pattern Agent:**
 ```
 Analyze coding patterns in the codebase:
-1. finder (Amp) / Explore subagent (Claude) "hook OR middleware OR decorator OR handler"
+1. finder "hook OR middleware OR decorator OR handler"
 2. Look for consistent naming conventions
 3. Identify error handling patterns
 
@@ -168,8 +163,8 @@ Return:
 **API/CLI Agent:**
 ```
 Discover public interfaces:
-1. finder (Amp) / Explore subagent (Claude) "route OR endpoint OR command OR export"
-2. finder (Amp) / Explore subagent (Claude) for exported symbols
+1. finder "route OR endpoint OR command OR export"
+2. finder for exported symbols
 3. Understand API route files or CLI command files
 
 Return:
@@ -182,30 +177,9 @@ Return:
 
 ### 2.3 Synthesis
 
-**Amp** — use `oracle`:
+Use `oracle`:
 ```
 oracle(
-  task: "Synthesize analysis into architecture overview",
-  context: """
-    Scan report: <scan.md>
-    Architecture: <agent A output>
-    Patterns: <agent B output>
-    Interfaces: <agent C output>
-    Integrations: <agent D output>
-    
-    Output:
-    1. High-level architecture description
-    2. Component relationships
-    3. Key patterns and conventions
-    4. Recommended doc structure
-  """,
-  files: ["history/docs-init/scan.md"]
-)
-```
-
-**Claude** — use `Plan` subagent:
-```
-Plan(
   task: "Synthesize analysis into architecture overview",
   context: """
     Scan report: <scan.md>
@@ -439,11 +413,11 @@ Always generate `docs/CODING_STANDARDS.md` on every hd-docs-init run (no signal 
 
 ## Phase 4: Review
 
-### 4.1 Validation via finder (Amp) / Explore Subagent (Claude)
+### 4.1 Validation via finder
 
 ```
 Task(
-  subagent_type: "finder (Amp) / Explore (Claude)",
+  subagent_type: "finder",
   prompt: """
     Review these generated docs against the actual codebase:
     <list of generated doc files>
@@ -475,8 +449,8 @@ Task(
 ### 5.1 Create/Update Files
 
 ```
-create_file (Amp) / Write (Claude) → for new docs
-edit_file (Amp) / Edit (Claude)    → for existing docs (preserve existing content, extend rather than replace)
+Write → for new docs
+Edit  → for existing docs (preserve existing content, extend rather than replace)
 ```
 
 ### 5.2 Architecture Diagrams
@@ -508,7 +482,7 @@ User: "Initialize docs for this new project"
    Agent C: REST API at /api/*, CLI has 5 commands
    Agent D: PostgreSQL, Redis cache
    
-3. `oracle` (Amp) / `Plan` subagent (Claude) synthesizes:
+3. `oracle` synthesizes:
    → 3-layer architecture: CLI → SDK → Server → DB
    → Recommend: AGENTS.md, docs/ARCHITECTURE.md, package AGENTS.md files
    
@@ -522,23 +496,23 @@ User: "Initialize docs for this new project"
    Task → docs/CODING_STANDARDS.md (always; pre-filled from pattern analysis)
    
 5. Review:
-   `oracle` (Amp) / `Plan` subagent (Claude) validates all docs match code
+   `oracle` validates all docs match code
    
 6. Apply:
-   create_file for each doc
+   Write for each doc
    mermaid for architecture diagrams
 ```
 
 ## Tool Quick Reference
 
-| Goal                  | Tool (Amp / Claude)                                               |
-| --------------------- | ----------------------------------------------------------------- |
-| Find code/structure   | `finder` (Amp) / `Explore` subagent (Claude)                     |
-| Parallel analysis     | `Task` (spawn multiple)                                           |
-| Synthesis             | `oracle` (Amp) / `Plan` (Claude)                                 |
-| Validate docs         | `Task` (`finder` (Amp) / `Explore` subagent (Claude))            |
-| Create docs           | `create_file` (Amp) / `Write` (Claude)                           |
-| Update docs           | `edit_file` (Amp) / `Edit` (Claude)                              |
+| Goal                  | Tool                                               |
+| --------------------- | -------------------------------------------------- |
+| Find code/structure   | `finder`                                           |
+| Parallel analysis     | `Task` (spawn multiple)                            |
+| Synthesis             | `oracle`                                           |
+| Validate docs         | `Task` (`finder`)                                  |
+| Create docs           | `Write`                                            |
+| Update docs           | `Edit`                                             |
 
 ## Quality Checklist
 

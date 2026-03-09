@@ -9,7 +9,7 @@ You are agent {AGENT_NAME} working on Track {N} of epic {EPIC_ID}.
 
 ## Setup
 1. Read {PROJECT_PATH}/AGENTS.md for tool preferences
-2. Load the worker skill: skill("hd-worker") (Claude) / skill("worker") (Amp)
+2. Load the worker skill: skill("hd-worker")
 
 ## Your Assignment
 - Track: {TRACK_NUMBER}
@@ -19,7 +19,7 @@ You are agent {AGENT_NAME} working on Track {N} of epic {EPIC_ID}.
 - Track thread: track:{AGENT_NAME}:{EPIC_ID}
 
 ## Tool Preferences (from AGENTS.md)
-- Codebase exploration: finder (Amp) / Explore subagent (Claude)
+- Codebase exploration: finder
 - Web search: mcp__exa__web_search_exa
 
 ## Protocol

@@ -6,11 +6,15 @@ metadata:
   copyright: "© HDWEBSOFT. All rights reserved."
 ---
 
-> **Note**: This skill uses Amp-specific tools (`find_thread`, `read_thread`). For Claude Code, use **hd-docs-sync** instead.
+> **Note**: This skill uses Amp-specific tools (`find_thread`, `read_thread`) that are NOT available in opencode.
+> **For opencode users: use `hd-docs-sync` instead** — it achieves the same result using git history.
 
 # Knowledge Extraction & Documentation Sync
 
 Extracts knowledge from Amp threads and synchronizes project documentation.
+
+> **⚠️ OpenCode Compatibility**: This skill is **non-functional** in opencode because `find_thread` and `read_thread`
+> are Amp-native tools with no opencode equivalent. Use `hd-docs-sync` which sources from git history instead.
 
 ## Pipeline
 
@@ -22,10 +26,10 @@ REQUEST → THREADS → TOPICS → CODE → DOCS
 | ------------ | -------------------------- | ---------------------- |
 | 1. Discover  | Find threads by query/time | `find_thread`          |
 | 2. Extract   | Parallel topic extraction  | `Task` + `read_thread` |
-| 3. Verify    | Ground topics in code      | `finder` (Amp) / `Explore` subagent (Claude) |
-| 4. Map       | Find target docs           | `finder` (Amp) / `Explore` subagent (Claude) |
-| 5. Reconcile | Compare all sources        | `oracle` (Amp) / `Plan` subagent (Claude)    |
-| 6. Apply     | Surgical updates           | `edit_file` (Amp) / `Edit` (Claude) |
+| 3. Verify    | Ground topics in code      | `finder` |
+| 4. Map       | Find target docs           | `finder` |
+| 5. Reconcile | Compare all sources        | `oracle` |
+| 6. Apply     | Surgical updates           | `Edit`   |
 
 ## Phase 1: Discover Threads
 
@@ -67,10 +71,10 @@ Return JSON:
 }"
 ```
 
-Collect outputs → `oracle` (Amp) / `Plan` subagent (Claude) synthesizes:
+Collect outputs → `oracle` synthesizes:
 
 ```
-oracle (Amp) / Plan subagent (Claude): "Cluster these extractions. Deduplicate.
+oracle: "Cluster these extractions. Deduplicate.
 Latest thread wins conflicts. Output unified topic list."
 ```
 
@@ -83,10 +87,10 @@ For each topic, verify claims:
 ```
 Topic: "Added retry logic to API client"
 
-1. finder (Amp) / Explore subagent (Claude) "retry logic API client"
+1. finder "retry logic API client"
    → finds src/api/client.ts
 
-2. finder (Amp) / Explore subagent (Claude) "RetryPolicy"
+2. finder "RetryPolicy"
    → RetryPolicy class at L45, 12 usages across 4 files
 
 → Confirmed: topic matches code
@@ -94,10 +98,10 @@ Topic: "Added retry logic to API client"
 
 | Claim Type        | Verification          |
 | ----------------- | --------------------- |
-| "Added X"         | `finder` (Amp) / `Explore` subagent (Claude) "X"          |
-| "Refactored Y"    | `finder` (Amp) / `Explore` subagent (Claude) "Y"          |
-| "Changed pattern" | `finder` (Amp) / `Explore` subagent (Claude) for pattern  |
-| "Updated config"  | `finder` (Amp) / `Explore` subagent (Claude) config paths |
+| "Added X"         | `finder` "X"          |
+| "Refactored Y"    | `finder` "Y"          |
+| "Changed pattern" | `finder` for pattern  |
+| "Updated config"  | `finder` config paths |
 
 ## Phase 4: Map to Docs
 
@@ -105,14 +109,14 @@ Discover existing documentation:
 
 ```bash
 # Find existing mentions
-finder (Amp) / Explore subagent (Claude) "topic keyword in docs"
-finder (Amp) / Explore subagent (Claude) "RetryPolicy in AGENTS.md"
+finder "topic keyword in docs"
+finder "RetryPolicy in AGENTS.md"
 ```
 
 Understand target files before updating:
 
 ```
-finder (Amp) / Explore subagent (Claude) "ARCHITECTURE.md structure"
+finder "ARCHITECTURE.md structure"
 → Note structure, sections, voice
 → Identify insertion point
 ```
@@ -121,10 +125,10 @@ See `reference/doc-mapping.md` for target file conventions.
 
 ## Phase 5: Reconcile
 
-`oracle` (Amp) / `Plan` subagent (Claude) compares three sources:
+`oracle` compares three sources:
 
 ```
-oracle (Amp) / Plan subagent (Claude) prompt:
+oracle prompt:
 "Compare:
 1. TOPICS: [extracted]
 2. CODE: [verified state]
@@ -141,7 +145,7 @@ Output:
 **Text updates**:
 
 ```
-Read target → edit_file (Amp) / Edit (Claude) with precise changes
+Read target → Edit with precise changes
 Preserve structure and voice
 ```
 
@@ -172,23 +176,23 @@ User: "Document the auth refactor from last week"
    Agent A: T-abc → {topics: [{name: "JWT migration"}]}
    Agent B: T-def, T-ghi → {topics: [{name: "session cleanup"}]}
 
-3. oracle (Amp) / Plan subagent (Claude) clusters:
+3. oracle clusters:
    → "Auth Refactor" with sub-topics
 
 4. Verify:
-   finder (Amp) / Explore subagent (Claude) "JWTService"
+   finder "JWTService"
    → confirmed at packages/auth/jwt.ts
 
 5. Map docs:
-   finder (Amp) / Explore subagent (Claude) "authentication in AGENTS.md"
+   finder "authentication in AGENTS.md"
    → Section exists at line 45
 
-6. oracle (Amp) / Plan subagent (Claude) reconciles:
+6. oracle reconciles:
    → Gap: JWT migration not documented
    → Update: AGENTS.md auth section
 
 7. Apply:
-   edit_file (Amp) / Edit (Claude) to AGENTS.md add JWT details
+   Edit to AGENTS.md add JWT details
    mermaid auth flow diagram
 ```
 
@@ -199,13 +203,13 @@ User: "Document the auth refactor from last week"
 | Find threads        | `find_thread query\|after:Xd\|file:path` |
 | Read thread         | `read_thread` with focused goal          |
 | Parallel extraction | `Task` (spawn multiple)                  |
-| Find code/docs      | `finder` (Amp) / `Explore` subagent (Claude) |
-| Synthesis           | `oracle` (Amp) / `Plan` subagent (Claude)    |
+| Find code/docs      | `finder`                                     |
+| Synthesis           | `oracle`                                         |
 
 ## Quality Checklist
 
 ```
-- [ ] Topics verified against code (finder (Amp) / Explore subagent (Claude))
+- [ ] Topics verified against code (`finder`)
 - [ ] Existing docs read before updating
 - [ ] Changes surgical, not wholesale
 - [ ] Mermaid diagrams have citations

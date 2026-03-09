@@ -53,7 +53,7 @@ Ask clarification questions:
          │
          ▼ (if user can't clarify)
 Explore:
-• finder (Amp) / Explore subagent (Claude): Find auth/login related code
+• `finder`: Find auth/login related code
 • git log: Recent changes in area
 • Check logs if available
 ```
@@ -63,7 +63,7 @@ Explore:
 ```
 Parse the stack trace:
 • Extract file:line locations
-• finder (Amp) / Explore subagent (Claude) on functions in trace
+• `finder` on functions in trace
 • Understand surrounding context
          │
          ▼
@@ -76,14 +76,14 @@ Identify reproduction conditions:
 
 ```
 Run test in isolation:
-• bun test <file> --filter "<test name>"
+• Run the project's test command (detect from package.json, Makefile, or AGENTS.md)
 • Understand test setup/assertions
 • Check git log: was it passing before?
          │
          ▼
 Trace implementation:
 • What code does test exercise?
-• finder (Amp) / Explore subagent (Claude) on tested function
+• `finder` on tested function
 • Recent changes to implementation?
 ```
 
@@ -163,8 +163,7 @@ Prove the bug exists and trace the code path.
 ### Code Path Tracing
 
 ```
-finder (Amp) / Explore subagent (Claude)
-                       → Find where error originates, find callers
+finder → Find where error originates, find callers
 git blame <file>       → Who changed it, when
 git log -p <file>      → What changed recently
 ```
@@ -225,27 +224,12 @@ STEP 4: Confirm root cause
 | **Data corruption** | Trace state changes       | Data flow analysis              |
 | **External dep**    | Check version/API changes | Changelogs, API docs            |
 
-### oracle (Amp) / Plan subagent (Claude) for RCA
+### `oracle` for RCA
 
 **Hypothesis Generation:**
 
 ```
-# Amp
 oracle(
-  task: "Generate root cause hypotheses",
-  context: """
-    Symptom: <error>
-    Code path: <trace>
-    Recent changes: <git log>
-
-    Generate 3-5 hypotheses ranked by likelihood.
-    For each, what evidence would support/refute it?
-  """,
-  files: ["<affected files>"]
-)
-
-# Claude
-Plan(
   task: "Generate root cause hypotheses",
   context: """
     Symptom: <error>
@@ -262,22 +246,7 @@ Plan(
 **Hypothesis Validation:**
 
 ```
-# Amp
 oracle(
-  task: "Validate root cause hypothesis",
-  context: """
-    Hypothesis: <proposed cause>
-    Evidence: <gathered evidence>
-
-    1. Does evidence support or refute?
-    2. Explain causal chain: cause → symptom
-    3. What would confirm this?
-  """,
-  files: ["<relevant files>"]
-)
-
-# Claude
-Plan(
   task: "Validate root cause hypothesis",
   context: """
     Hypothesis: <proposed cause>
@@ -355,7 +324,7 @@ Before fixing, understand blast radius.
 ### Impact Analysis
 
 ```
-finder (Amp) / Explore subagent (Claude) <affected function>
+finder <affected function>
     → Who else calls this?
     → Similar code that might have same bug?
 
@@ -381,7 +350,7 @@ If fix approach is uncertain:
 br create "Spike: Validate fix approach for <issue>" -t task -p 0
 ```
 
-Execute via MULTI_AGENT_WORKFLOW, write to `.spikes/<issue-id>/`.
+Execute via `Task` tool, write to `.spikes/<issue-id>/`.
 
 ### Impact Report Template
 
@@ -398,7 +367,7 @@ Save to `history/issues/<id>/impact.md`:
 
 ### Callers Affected
 
-- <List from finder (Amp) / Explore subagent (Claude)>
+- <List from `finder`>
 
 ### Related Code
 
@@ -473,8 +442,8 @@ br create "Update docs for <behavior change>" -t task --blocks <epic> --deps <fi
 - [ ] Regression test passes
 - [ ] Original symptom no longer reproducible
 - [ ] No new test failures
-- [ ] `bun run check-types` passes
-- [ ] `bun run build` passes
+- [ ] Type check passes (use project's type-check command from AGENTS.md or package.json)
+- [ ] Build passes (use project's build command from AGENTS.md or package.json)
 ```
 
 ## Phase 5: Verification
@@ -483,19 +452,22 @@ Prove fix works and nothing else broke.
 
 ### Verification Checklist
 
+> **Detect the project's test/build commands** from `AGENTS.md`, `package.json`, `Makefile`, `Cargo.toml`, or `go.mod`.
+> Do NOT assume a specific runtime (bun, npm, yarn, etc.) — use whatever the project uses.
+
 ```bash
 # 1. Regression test passes
-bun test <regression-test-file>
+<project test command> <regression-test-file>
 
 # 2. Original symptom gone
 <manual verification or test>
 
 # 3. No new failures
-bun run test
+<project test command>
 
 # 4. Types and build
-bun run check-types
-bun run build
+<project type-check command>
+<project build command>
 ```
 
 ### Iteration: Verify → RCA Loop
@@ -539,7 +511,7 @@ Prevent infinite iteration:
 | ------------ | ---------- | ---------- | --------------------------- |
 | RCA → Repro  | 2          | 4          | Escalate / pair debug       |
 | RCA → Triage | 1          | 2          | Re-evaluate original report |
-| Verify → RCA | 2          | 3          | `oracle` (Amp) / `Plan` subagent (Claude) deep review |
+| Verify → RCA | 2          | 3          | `oracle` deep review |
 
 ## Optional: Task Finalize Hook
 
@@ -558,12 +530,12 @@ Skip this step if no task URL is in context, or if the task was already updated.
 
 | Need                  | Tool                                                  |
 | --------------------- | ----------------------------------------------------- |
-| Parse stack trace     | `finder` (Amp) / `Explore` subagent (Claude)          |
-| Find callers          | `finder` (Amp) / `Explore` subagent (Claude)          |
+| Parse stack trace     | `finder`          |
+| Find callers          | `finder`          |
 | Recent changes        | git log, git blame                                    |
 | Binary search commits | git bisect                                            |
-| Reasoning about cause | `oracle` (Amp) / `Plan` subagent (Claude)             |
-| Validate fix approach | Spike via MULTI_AGENT_WORKFLOW                        |
+| Reasoning about cause | `oracle`             |
+| Validate fix approach | Spike via `Task` tool                        |
 
 ### Common Mistakes
 

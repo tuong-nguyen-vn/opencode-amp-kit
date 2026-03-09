@@ -16,15 +16,15 @@ Keeps project docs current by extracting knowledge from git history and workflow
 REQUEST → ASK → COLLECT → VERIFY → MAP → RECONCILE → APPLY → STANDARDS DELTA
 ```
 
-| Phase              | Action                                  | Tools (Amp / Claude)                                          |
-| ------------------ | --------------------------------------- | ------------------------------------------------------------- |
-| 1. Ask             | Scope + start date from user            | (interactive)                                                 |
-| 2. Collect         | git log + history/ + plans/ (parallel)  | `Bash`, `Glob`, `Read`, `oracle` (Amp) / `Plan` subagent (Claude) |
-| 3. Verify          | Ground topics in code                   | `finder` (Amp) / `Explore` subagent (Claude)                  |
-| 4. Map             | Auto-detect target docs                 | `finder` (Amp) / `Explore` subagent (Claude)                  |
-| 5. Reconcile       | Topics vs code vs docs                  | `oracle` (Amp) / `Plan` subagent (Claude)                     |
-| 6. Apply           | Surgical updates                        | `edit_file` (Amp) / `Edit` (Claude), `create_file` (Amp) / `Write` (Claude) |
-| 7. Standards Delta | Compare base vs project standards; offer create or diff+suggest | `Read`, `AskUserQuestion`, `Edit` / `Write` (Claude) |
+| Phase              | Action                                  | Tools                                          |
+| ------------------ | --------------------------------------- | ---------------------------------------------- |
+| 1. Ask             | Scope + start date from user            | (interactive)                                  |
+| 2. Collect         | git log + history/ (parallel)           | `Bash`, `Glob`, `Read`, `oracle`               |
+| 3. Verify          | Ground topics in code                   | `finder`                                       |
+| 4. Map             | Auto-detect target docs                 | `finder`                                       |
+| 5. Reconcile       | Topics vs code vs docs                  | `oracle`                                       |
+| 6. Apply           | Surgical updates                        | `Edit`, `Write`                                |
+| 7. Standards Delta | Compare base vs project standards; offer create or diff+suggest | `Read`, `Edit` / `Write` |
 
 ## Phase 1: Ask
 
@@ -71,15 +71,9 @@ Extract from output:
 | `execution-plan.md` | What was planned |
 | `verification-report.md` | What was confirmed done (✅ = completed) |
 
-### Stream C — Plans Folder
-
-1. `Glob` all `plans/*/` folders
-2. Filter by date prefix >= start date
-3. `Read` any `.md` files found
-
 ### Synthesis
 
-`oracle` (Amp) / `Plan` subagent (Claude) clusters all three streams into a unified topic list.
+`oracle` clusters all streams into a unified topic list.
 See `reference/collection-prompts.md` → **Stream Synthesis Prompt**.
 
 ## Phase 3: Verify Against Code
@@ -87,16 +81,16 @@ See `reference/collection-prompts.md` → **Stream Synthesis Prompt**.
 For each topic, confirm it exists in the codebase:
 
 ```
-finder (Amp) / Explore subagent (Claude): "Verify: '<topic claim>'"
+finder: "Verify: '<topic claim>'"
 → Grep/glob for changed symbols, files, patterns
 ```
 
 | Claim | Verification |
 | ----- | ------------ |
-| "Added X" | `finder` (Amp) / `Explore` (Claude) "X" in codebase |
-| "Refactored Y" | `finder` (Amp) / `Explore` (Claude) current state of Y |
-| "Changed pattern" | `finder` (Amp) / `Explore` (Claude) for pattern usage |
-| "Updated config" | `finder` (Amp) / `Explore` (Claude) config file paths |
+| "Added X" | `finder` "X" in codebase |
+| "Refactored Y" | `finder` current state of Y |
+| "Changed pattern" | `finder` for pattern usage |
+| "Updated config" | `finder` config file paths |
 
 **Code is truth.** If not found: mark as `"planned"` or `"historical"` — do not document as current.
 
@@ -107,8 +101,8 @@ See `reference/collection-prompts.md` → **Code Verification Prompt**.
 Discover existing documentation before choosing targets:
 
 ```
-finder (Amp) / Explore subagent (Claude): "topic keyword in existing docs"
-finder (Amp) / Explore subagent (Claude): "AGENTS.md structure and sections"
+finder: "topic keyword in existing docs"
+finder: "AGENTS.md structure and sections"
 ```
 
 Use file-change signals from Stream A to auto-target:
@@ -139,7 +133,7 @@ See `reference/doc-mapping.md` for full conventions.
 
 ## Phase 5: Reconcile
 
-`oracle` (Amp) / `Plan` subagent (Claude) compares three sources:
+`oracle` compares three sources:
 
 ```
 1. TOPICS: [verified topic list]
@@ -160,8 +154,8 @@ Read each target doc first, then edit:
 
 ```
 Read → understand structure, voice, existing sections
-edit_file (Amp) / Edit (Claude) → surgical changes only (preserve style and tone)
-create_file (Amp) / Write (Claude) → only for brand-new doc files
+Edit → surgical changes only (preserve style and tone)
+Write → only for brand-new doc files
 ```
 
 For multiple unrelated files: spawn parallel `Task` per file.
@@ -249,20 +243,19 @@ User: "Sync docs for the estimation enhancements from last 2 weeks"
 2. Collect (parallel):
    Git:     12 commits, touched skills/hd-estimation/**
    History: history/20260210-estimation-enhancements/ → 5 .md files read
-   Plans:   plans/20260210-*/ → no .md files found
 
-3. oracle (Amp) / Plan subagent (Claude) synthesizes:
+3. oracle synthesizes:
    → Topic: "Dual-column estimation format" (status: completed ✅)
    → Topic: "Flexible pricing tiers" (status: completed ✅)
    → Topic: "Args parsing" (status: completed ✅)
 
 4. Verify:
-   finder / Explore "dual column estimation" → confirmed in SKILL.md L45
-   finder / Explore "pricing tiers"         → confirmed in reference/pricing.md
+   finder "dual column estimation" → confirmed in SKILL.md L45
+   finder "pricing tiers"         → confirmed in reference/pricing.md
 
 5. Map:
-   Git touched skills/hd-estimation/** → target: ~/.claude/skills/hd-estimation/SKILL.md
-   finder / Explore "estimation in AGENTS.md" → section exists at L23
+   Git touched skills/hd-estimation/** → target: skills/hd-estimation/SKILL.md
+   finder "estimation in AGENTS.md" → section exists at L23
 
 6. Reconcile:
    GAPS:  pricing tiers not in AGENTS.md
@@ -271,22 +264,22 @@ User: "Sync docs for the estimation enhancements from last 2 weeks"
 
 7. Apply:
    Read AGENTS.md → note structure and voice
-   edit_file / Edit estimation section → update format, add pricing tiers
+   Edit estimation section → update format, add pricing tiers
 ```
 
 ## Tool Quick Reference
 
-| Goal | Tool (Amp / Claude) |
-| ---- | ------------------- |
-| Ask scope + date | `AskUserQuestion` |
+| Goal | Tool |
+| ---- | ---- |
+| Ask scope + date | (ask in response text, wait for reply) |
 | Git log / file changes | `Bash` |
 | List history/ entries | `Glob` |
 | Read history files | `Read` |
-| Verify topics in code | `finder` (Amp) / `Explore` subagent (Claude) |
-| Find doc sections | `finder` (Amp) / `Explore` subagent (Claude) |
-| Synthesize + reconcile | `oracle` (Amp) / `Plan` subagent (Claude) |
-| Update existing docs | `edit_file` (Amp) / `Edit` (Claude) |
-| Create new docs | `create_file` (Amp) / `Write` (Claude) |
+| Verify topics in code | `finder` |
+| Find doc sections | `finder` |
+| Synthesize + reconcile | `oracle` |
+| Update existing docs | `Edit` |
+| Create new docs | `Write` |
 | Parallel file updates | `Task` |
 
 ## Quality Checklist

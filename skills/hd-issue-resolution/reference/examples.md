@@ -150,7 +150,7 @@ Add null check before accessing user properties, or revert to throwing behavior.
 
 ```bash
 # Check who else uses findUser
-finder (Amp) / Explore subagent (Claude) "findUser references"
+finder "findUser references"
 # Found 5 other callers - all might have same bug!
 ```
 
@@ -277,7 +277,7 @@ it('should accept unicode characters in username', () => {
 **Trace**:
 
 ```bash
-finder (Amp) / Explore subagent (Claude) "validateUsername definition"
+finder "validateUsername definition"
 # Found: packages/domain/src/validation/username.ts
 
 Read packages/domain/src/validation/username.ts
@@ -298,7 +298,7 @@ Read packages/domain/src/validation/username.ts
 ### Phase 3: Impact Assessment
 
 ```bash
-finder (Amp) / Explore subagent (Claude) "validateUsername references"
+finder "validateUsername references"
 # Used in: signup, profile-update
 ```
 

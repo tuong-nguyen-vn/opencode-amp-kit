@@ -94,11 +94,22 @@ This checks:
 pip install kreuzberg
 
 # OCR support (optional — for scanned PDFs, images)
-brew install tesseract          # macOS
-pip install "kreuzberg[easyocr]" # alternative OCR backend
+# macOS:
+brew install tesseract
+# Debian/Ubuntu:
+# sudo apt-get install tesseract-ocr
+# Fedora/RHEL:
+# sudo dnf install tesseract
+
+pip install "kreuzberg[easyocr]" # alternative OCR backend (no system package needed)
 
 # Legacy Office formats (optional — for .doc, .ppt, .xls)
+# macOS:
 brew install --cask libreoffice
+# Debian/Ubuntu:
+# sudo apt-get install libreoffice
+# Fedora/RHEL:
+# sudo dnf install libreoffice
 ```
 
 ---
@@ -225,7 +236,7 @@ Chain `hd-docs-parse` with other skills for end-to-end workflows:
 |------------|-------|-------|
 | Max file size | System memory dependent | Large files (>500MB) may need chunking |
 | OCR accuracy | Depends on scan quality | 300 DPI+ recommended for scanned docs |
-| OCR languages | Tesseract language packs | Install additional packs: `brew install tesseract-lang` |
+| OCR languages | Tesseract language packs | Install additional packs via system package manager (e.g., `tesseract-lang` on macOS, `tesseract-ocr-<lang>` on Debian) |
 | Archive depth | Recursive | Nested archives extracted fully |
 | Legacy Office | Requires LibreOffice | `.doc`, `.ppt`, `.xls` need external converter |
 | Concurrent files | Sequential processing | Files processed one at a time |
@@ -240,8 +251,8 @@ The script prints clear error messages for common issues:
 |-------|---------|-----|
 | Missing file | "File not found: `<path>`" | Check file path |
 | Missing kreuzberg | Install instructions | `pip install kreuzberg` |
-| Missing OCR engine | Tesseract hint | `brew install tesseract` |
-| Missing LibreOffice | LibreOffice hint | `brew install --cask libreoffice` |
+| Missing OCR engine | Tesseract hint | Install via system package manager (e.g., `brew install tesseract`, `apt-get install tesseract-ocr`) |
+| Missing LibreOffice | LibreOffice hint | Install via system package manager (e.g., `brew install --cask libreoffice`, `apt-get install libreoffice`) |
 | Unsupported format | Lists supported formats | Check format table above |
 
 ---
