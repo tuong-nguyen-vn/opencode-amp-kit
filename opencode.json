@@ -1,0 +1,93 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa,crawling_exa",
+      "enabled": true
+    }
+  },
+  "agent": {
+    "build": {
+      "disable": true
+    },
+    "plan": {
+      "disable": true
+    },
+    "explore": {
+      "disable": true
+    }
+  },
+  "provider": {
+    "github-copilot": {
+      "models": {
+        "claude-opus-4.6": {
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          }
+        },
+        "claude-sonnet-4.6": {
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "claude-haiku-4.5": {
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "claude-sonnet-4.5": {
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "claude-opus-4.5": {
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        }
+      }
+    }
+  },
+  "autoupdate": false,
+  "copilot": {
+    "warmup": {
+      "enabled": true,
+      "interval_hours": 8,
+      "models": {
+        "claude-opus-4.6": {
+          "interval_hours": 12
+        },
+        "claude-opus-4.5": {
+          "interval_hours": 12
+        },
+        "claude-sonnet-4.6": {
+          "interval_hours": 8
+        },
+        "claude-sonnet-4.5": {
+          "interval_hours": 8
+        },
+        "gpt-5.3-codex": {
+          "interval_hours": 8
+        },
+        "gpt-5.4": {
+          "interval_hours": 8
+        },
+        "gemini-3-pro": {
+          "interval_hours": 8
+        },
+        "claude-haiku-4.5": {
+          "interval_hours": 4
+        },
+        "gemini-3-flash-preview": {
+          "interval_hours": 4
+        }
+      }
+    }
+  }
+}
