@@ -1,6 +1,6 @@
 ---
 name: hd-team
-description: Orchestrate parallel agent teams in OpenCode. Use for research, cook, review, debug workflows with independent subagent teammates and inter-agent communication.
+description: Orchestrate parallel agent teams in OpenCode. Use for research, cook, review, debug workflows with lead-coordinated parallel subagents.
 license: proprietary
 metadata:
   copyright: "© HDWEBSOFT. All rights reserved."
@@ -8,9 +8,9 @@ metadata:
 
 # Agent Team Orchestration for OpenCode
 
-Coordinate multiple parallel subagents as a team using **custom tools** in `.opencode/tools/`.
+Coordinate multiple parallel subagents as a team using **custom tools** provided by the `hd-team-tools` plugin.
 
-> **Architecture**: Lead (this agent) uses `team_create`, `task_create`, `task_list`, `team_status`, `team_delete` tools. Workers use `task_get`, `task_update`, `message_send` tools. Dependency resolution is automatic.
+> **Architecture**: Lead (this agent) owns ALL state management. Workers are pure executors — they receive task descriptions and return results via Task return value. Workers have NO access to custom tools.
 
 ## Quick Reference
 
@@ -25,16 +25,20 @@ Coordinate multiple parallel subagents as a team using **custom tools** in `.ope
 
 | Tool | Used By | Purpose |
 |------|---------|---------|
-| `team_create` | Lead | Create team with directory structure |
+| `team_spawn` | **Lead** | Create team + all tasks in 1 call (compound) |
+| `team_complete` | **Lead** | Bulk-complete tasks + write reports in 1 call (compound) |
+| `team_create` | Lead | Create team (backward compat) |
 | `team_status` | Lead | Get task summary, completion flag |
 | `team_list` | Lead | List all active teams |
 | `team_delete` | Lead | Delete team and all data |
-| `task_create` | Lead | Create tasks with dependencies |
-| `task_update` | Lead/Worker | Update status, auto-unblock dependents |
-| `task_get` | Worker | Read assigned task details |
+| `task_create` | Lead | Create tasks with dependencies (backward compat) |
+| `task_update` | Lead | Update status, auto-unblock dependents |
+| `task_get` | Lead | Read task details |
 | `task_list` | Lead | List tasks filtered by status/owner |
-| `message_send` | Worker | Send messages to agents or broadcast |
-| `message_fetch` | Lead/Worker | Fetch messages with filters |
+| `message_send` | Lead | Send messages (lead-only) |
+| `message_fetch` | Lead | Fetch messages with filters |
+
+> **IMPORTANT**: Workers CANNOT use any of these tools. OpenCode isolates Task-spawned subagents from plugin tools.
 
 ## Team Naming
 
@@ -44,26 +48,25 @@ Every team gets a unique `<team-name>` (kebab-case slug derived from the topic/p
 - `hd-team cook plans/auth-plan.md` → team name: `cook-auth-plan`
 - List active teams: `team_list()`
 
-## Core Pattern: Dependency-Aware Spawn Loop
-
-All templates use this loop:
+## Core Pattern: Lead-Only Spawn Loop
 
 ```
-1. team_create(teamName, template, agents)
-2. task_create(...) × N  (some with blockedBy dependencies)
-3. LOOP:
-   a. status = team_status(teamName)
-   b. if status.isComplete → DONE
-   c. pending = task_list(teamName, status: "pending")
-   d. if pending.length == 0 AND no in_progress → DEADLOCK
-   e. for each pending task (max 4 per batch):
-      - task_update(task.id, status: "in_progress")
-      - spawn Task(subagent_type=..., prompt=includes task.id)
-   f. wait for ALL spawned agents to return
-   g. (workers called task_update(completed) → auto-unblock dependents)
-   h. goto 3a
-4. Synthesize reports
-5. team_delete(teamName)
+1. team_spawn(teamName, template, tasks=[...])   ← 1 call: creates team + tasks
+   - Tasks with owner + no blockers → `in_progress`
+   - Tasks with blockedBy → `blocked`
+   - Tasks without owner → `pending`
+   - blockedBy values: integer strings ("0","1") → resolved to task IDs by array index; non-integers → literal task IDs
+2. LOOP:
+   a. Spawn Task() for each in_progress task (max 4 parallel)
+      - Worker prompt: ~100-200 tokens (task description + file scope only)
+   b. Wait for all Task returns
+   c. team_complete(teamName, results=[{taskId, summary, report?}])
+      ← 1 call: marks completed + writes reports + auto-unblocks dependents
+   d. status = team_status(teamName)
+   e. if isComplete → DONE
+   f. if pending tasks exist (newly unblocked) → spawn next batch → goto 2a
+3. Synthesize from .team/{name}/reports/
+4. team_delete(teamName)
 ```
 
 ## ON `research <topic>` [--researchers N]
@@ -71,45 +74,41 @@ All templates use this loop:
 IMMEDIATELY execute. See `reference/research-template.md`.
 
 1. Derive N angles (default 3): architecture, alternatives, risks
-2. `team_create("research-{slug}", "research", agents)`
-3. `task_create(...)` × N — all pending (no deps)
-4. Spawn N researchers via Task (parallel, max 4)
-5. Workers call `task_update(completed)` when done
-6. Synthesize → `plans/reports/research-summary-{topic}.md`
-7. `team_delete("research-{slug}")`
+2. `team_spawn("research-{slug}", "research", tasks=[...])`
+3. Spawn N researchers via Task (minimal prompts)
+4. Parse return values → `team_complete(teamName, results)`
+5. Synthesize → `plans/reports/research-summary-{topic}.md`
+6. `team_delete("research-{slug}")`
 
 ## ON `cook <plan>` [--devs N]
 
 IMMEDIATELY execute. See `reference/cook-template.md`.
 
 1. Read plan (path or create via planner)
-2. `team_create("cook-{slug}", "cook", agents)`
-3. `task_create(...)` for devs (no deps) + tester (blockedBy all dev tasks)
-4. Spawn loop: devs first → tester auto-unblocks when devs complete
-5. Synthesize results, cleanup, report
+2. `team_spawn("cook-{slug}", "cook", tasks=[...])` — devs + tester (blockedBy devs)
+3. Spawn devs → team_complete → tester auto-unblocks → spawn tester → team_complete
+4. Synthesize results, cleanup, report
 
 ## ON `review <scope>` [--reviewers N]
 
 IMMEDIATELY execute. See `reference/review-template.md`.
 
 1. Derive N focuses (default 3): security, performance, coverage
-2. `team_create("review-{slug}", "review", agents)`
-3. `task_create(...)` × N — all pending
-4. Spawn reviewers (parallel), synthesize, cleanup
+2. `team_spawn("review-{slug}", "review", tasks=[...])`
+3. Spawn reviewers (parallel), team_complete, synthesize, cleanup
 
 ## ON `debug <issue>` [--debuggers N]
 
 IMMEDIATELY execute. See `reference/debug-template.md`.
 
 1. Generate N hypotheses (default 3)
-2. `team_create("debug-{slug}", "debug", agents)`
-3. `task_create(...)` × N — all pending
-4. Spawn debuggers (adversarial), identify root cause, cleanup
+2. `team_spawn("debug-{slug}", "debug", tasks=[...])`
+3. Spawn debuggers (adversarial), team_complete, identify root cause, cleanup
 
 ## File Ownership Rules
 
 - Each dev teammate owns distinct files — NO overlap
-- Define ownership via fileScope in task_create
+- Define ownership via fileScope in task definitions
 - Tester owns test files only, reads implementation files
 - If shared file needed, lead handles it directly
 

@@ -1,53 +1,46 @@
-# Communication Protocol
+# Lead Orchestration Protocol
 
-## Custom Tools Communication
+## Lead-Only Communication
 
-All inter-agent communication uses custom tools in `.opencode/tools/`. No external dependencies required.
-
-### Worker Protocol
-
-Each worker subagent follows this lifecycle:
-
-```
-1. task_get(teamName, taskId) → read assigned task
-2. task_update(teamName, taskId, status: "in_progress", owner: agentName)
-3. Execute task
-4. message_send(teamName, from: name, to: "all", type: "finding", content: "...")
-5. Write final report to .team/{teamName}/reports/{name}-report.md
-6. task_update(teamName, taskId, status: "completed")
-7. Return summary string to orchestrator
-```
+All state management and communication flows through the Lead. Workers are pure executors — they return results via Task return value. No worker-to-worker or worker-to-tool communication exists.
 
 ### Lead Protocol
 
 ```
-1. team_create(teamName, template, agents)
-2. task_create(...) × N  (with blockedBy dependencies)
-3. Spawn loop (see SKILL.md core pattern)
-4. Read .team/{teamName}/reports/ for synthesis
-5. team_delete(teamName)
+1. team_spawn(teamName, template, tasks=[...])   ← creates team + tasks + sets in_progress
+2. LOOP:
+   a. Spawn Task() per in_progress task (max 4 parallel)
+   b. Wait for all Task returns → parse results
+   c. team_complete(teamName, results=[{taskId, summary, report}])
+      ← marks completed + writes reports + auto-unblocks dependents
+   d. status = team_status(teamName)
+   e. if isComplete → DONE
+   f. if pending (newly unblocked) → goto 2a
+3. Read .team/{teamName}/reports/ for synthesis
+4. team_delete(teamName)
 ```
 
-### Message Types
+### Worker Protocol (Minimal)
+
+Workers receive only a task description. Their entire lifecycle is:
+
+```
+1. Read task description from prompt (~150 tokens)
+2. Execute task
+3. Return structured summary string to Lead
+```
+
+Workers communicate results **via Task return value**, not via tools.
+
+### Message Tools (Lead-Only)
+
+Message tools (`message_send`, `message_fetch`) are available for the Lead to annotate state or log progress. Workers do not use them.
 
 | Type | Use Case |
 |------|----------|
-| `message` | DM between agents |
-| `broadcast` | All agents (to: "all") |
-| `finding` | Share discovery with team |
-| `blocker` | Report blocker to lead |
-| `complete` | Notify task completion |
-
-### Cross-Agent Reading
-
-Workers can read other workers' findings:
-
-```
-message_fetch(teamName, to: myName)  → messages addressed to me + broadcasts
-message_fetch(teamName, type: "finding") → all findings from all agents
-```
-
-This enables adversarial debate (debug template) and collaborative synthesis.
+| `broadcast` | Lead logs progress for compaction context |
+| `finding` | Lead records synthesis results |
+| `blocker` | Lead notes issues during orchestration |
 
 ### Orchestrator Monitoring
 
@@ -58,3 +51,10 @@ task_list(teamName, status: "in_progress") → currently running tasks
 ```
 
 Completion = `team_status.isComplete === true` (all tasks completed or cancelled).
+
+### Error Handling
+
+If a Task spawn fails or times out:
+1. Use `team_complete` with `status: "cancelled"` for that task
+2. Decide: retry the task, skip it, or abort the entire team
+3. Cancelled tasks auto-unblock dependents (same as completed)

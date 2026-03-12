@@ -13,64 +13,44 @@ Default N=3:
 | 3 | Test coverage — gaps, edge cases, error paths |
 | 4+ | Derive from scope: architecture, DX, accessibility |
 
-### Step 2: Create Team
+### Step 2: Spawn Team
 
 ```
-team_create(
+team_spawn(
   teamName: "review-{scope-slug}",
   template: "review",
-  agents: '[{"name":"reviewer-1","role":"reviewer"},{"name":"reviewer-2","role":"reviewer"},{"name":"reviewer-3","role":"reviewer"}]'
+  tasks: '[
+    {"subject":"Review: Security","description":"...","owner":"reviewer-1","role":"reviewer"},
+    {"subject":"Review: Performance","description":"...","owner":"reviewer-2","role":"reviewer"},
+    {"subject":"Review: Test Coverage","description":"...","owner":"reviewer-3","role":"reviewer"}
+  ]'
 )
 ```
 
-### Step 3: Create Tasks
+All tasks have owners + no blockers → status "in_progress" (set automatically by team_spawn).
+
+### Step 3: Spawn Reviewers (Parallel)
 
 ```
-task_create(teamName: "review-{slug}", subject: "Review: Security", description: "...", owner: "reviewer-1")
-task_create(teamName: "review-{slug}", subject: "Review: Performance", description: "...", owner: "reviewer-2")
-task_create(teamName: "review-{slug}", subject: "Review: Test Coverage", description: "...", owner: "reviewer-3")
-```
-
-All tasks pending (no dependencies).
-
-### Step 4: Spawn Reviewers (Parallel)
-
-```
-pending = task_list("review-{slug}", status: "pending")
-
-for each task:
-  task_update(teamName, task.id, status: "in_progress")
-
 Task(
   subagent_type="code-reviewer",
   description="Team review-{slug}/reviewer-{N}: <focus>",
   prompt="""
-You are reviewer-{N} on team "review-{slug}".
-
-## Your Focus
-{focus_description}
+You are a code reviewer focusing on: {focus_description}
 
 ## Scope to Review
 {scope_description}
 
-## Custom Tools
-- task_get("review-{slug}", "{task-id}") → your assignment
-- task_update("review-{slug}", "{task-id}", status:"completed") → mark done
-- message_send("review-{slug}", from:"reviewer-{N}", to:"all", type:"finding", content:"...") → share findings
-
 ## Protocol
-1. task_get for your assignment
-2. Review the scope for your specific focus area
-3. Rate findings by severity: CRITICAL | IMPORTANT | MODERATE
-4. Each finding must include:
-   - Severity rating
-   - Concrete evidence (file, line, code snippet)
-   - Recommendation
-5. NO "seems" or "probably" — concrete evidence only
-6. Write report to .team/review-{slug}/reports/reviewer-{N}-report.md
-7. task_update status: "completed"
+- Rate findings by severity: CRITICAL | IMPORTANT | MODERATE
+- Each finding must include:
+  - Severity rating
+  - Concrete evidence (file, line, code snippet)
+  - Recommendation
+- NO "seems" or "probably" — concrete evidence only
 
-## Report Format
+## Output
+Return a structured report:
 # Review: <focus>
 ## CRITICAL Findings
 - [CRITICAL] <finding> — <evidence> — <recommendation>
@@ -78,23 +58,25 @@ You are reviewer-{N} on team "review-{slug}".
 ## MODERATE Findings
 ## Summary
 
-Team Context:
-- Work dir: {cwd}
-- Team name: review-{slug}
-- Your name: reviewer-{N}
-- Your role: reviewer
+Work dir: {cwd}
 """
 )
 ```
 
-### Step 5: Monitor
+### Step 4: Complete Tasks
 
 ```
-team_status("review-{slug}")
-# Wait for isComplete
+team_complete(
+  teamName: "review-{slug}",
+  results: '[
+    {"taskId":"<id-1>","summary":"<return value>","report":"<full report>"},
+    {"taskId":"<id-2>","summary":"<return value>","report":"<full report>"},
+    {"taskId":"<id-3>","summary":"<return value>","report":"<full report>"}
+  ]'
+)
 ```
 
-### Step 6: Synthesize
+### Step 5: Synthesize
 
 Read all reviewer reports. Deduplicate findings across reviewers.
 
@@ -111,7 +93,7 @@ Save to `plans/reports/review-{scope-slug}.md`:
 | # | Finding | Owner | Priority |
 ```
 
-### Step 7: Cleanup & Report
+### Step 6: Cleanup & Report
 
 ```
 team_delete("review-{slug}")
