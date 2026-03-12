@@ -15,48 +15,37 @@ Default N=3:
 
 ### Step 2: Create Team
 
-Generate team name: `review-{scope-slug}` (kebab-case).
-
-```bash
-mkdir -p .team/review-{scope-slug}/{tasks,messages,status,reports}
 ```
-
-Write `.team/review-{scope-slug}/config.json`:
-```json
-{
-  "team_name": "review-{scope-slug}",
-  "template": "review",
-  "mode": "LITE",
-  "created": "<ISO timestamp>",
-  "agents": [
-    {"name": "reviewer-1", "role": "reviewer", "status": "active"}
-  ]
-}
+team_create(
+  teamName: "review-{scope-slug}",
+  template: "review",
+  agents: '[{"name":"reviewer-1","role":"reviewer"},{"name":"reviewer-2","role":"reviewer"},{"name":"reviewer-3","role":"reviewer"}]'
+)
 ```
 
 ### Step 3: Create Tasks
 
-Write `.team/review-{scope-slug}/tasks/reviewer-{N}.json` for each reviewer:
-```json
-{
-  "id": "reviewer-001",
-  "subject": "Review: <focus-title>",
-  "description": "Review <scope> for <focus>...",
-  "status": "pending",
-  "owner": "reviewer-{N}",
-  "blockedBy": [],
-  "created": "<ISO timestamp>"
-}
 ```
+task_create(teamName: "review-{slug}", subject: "Review: Security", description: "...", owner: "reviewer-1")
+task_create(teamName: "review-{slug}", subject: "Review: Performance", description: "...", owner: "reviewer-2")
+task_create(teamName: "review-{slug}", subject: "Review: Test Coverage", description: "...", owner: "reviewer-3")
+```
+
+All tasks pending (no dependencies).
 
 ### Step 4: Spawn Reviewers (Parallel)
 
 ```
+pending = task_list("review-{slug}", status: "pending")
+
+for each task:
+  task_update(teamName, task.id, status: "in_progress")
+
 Task(
   subagent_type="code-reviewer",
-  description="Team review-{scope-slug}/reviewer-{N}: <focus>",
+  description="Team review-{slug}/reviewer-{N}: <focus>",
   prompt="""
-You are reviewer-{N} on team "review-{scope-slug}".
+You are reviewer-{N} on team "review-{slug}".
 
 ## Your Focus
 {focus_description}
@@ -64,35 +53,34 @@ You are reviewer-{N} on team "review-{scope-slug}".
 ## Scope to Review
 {scope_description}
 
+## Custom Tools
+- task_get("review-{slug}", "{task-id}") → your assignment
+- task_update("review-{slug}", "{task-id}", status:"completed") → mark done
+- message_send("review-{slug}", from:"reviewer-{N}", to:"all", type:"finding", content:"...") → share findings
+
 ## Protocol
-1. Read .team/review-{scope-slug}/tasks/reviewer-{N}.json
-2. Write .team/review-{scope-slug}/status/reviewer-{N}.json: {"status": "working"}
-3. Review the scope for your specific focus area
-4. Rate findings by severity: CRITICAL | IMPORTANT | MODERATE
-5. Each finding must include:
+1. task_get for your assignment
+2. Review the scope for your specific focus area
+3. Rate findings by severity: CRITICAL | IMPORTANT | MODERATE
+4. Each finding must include:
    - Severity rating
    - Concrete evidence (file, line, code snippet)
    - Recommendation
-6. NO "seems" or "probably" — concrete evidence only
-7. Write report to .team/review-{scope-slug}/reports/reviewer-{N}-report.md
-8. Update .team/review-{scope-slug}/status/reviewer-{N}.json: {"status": "done"}
+5. NO "seems" or "probably" — concrete evidence only
+6. Write report to .team/review-{slug}/reports/reviewer-{N}-report.md
+7. task_update status: "completed"
 
 ## Report Format
 # Review: <focus>
 ## CRITICAL Findings
 - [CRITICAL] <finding> — <evidence> — <recommendation>
 ## IMPORTANT Findings
-- [IMPORTANT] <finding> — <evidence> — <recommendation>
 ## MODERATE Findings
-- [MODERATE] <finding> — <evidence> — <recommendation>
 ## Summary
-{total_findings} findings ({critical} critical, {important} important)
 
 Team Context:
 - Work dir: {cwd}
-- Team name: review-{scope-slug}
-- Team dir: {cwd}/.team/review-{scope-slug}/
-- Mode: LITE
+- Team name: review-{slug}
 - Your name: reviewer-{N}
 - Your role: reviewer
 """
@@ -101,7 +89,10 @@ Team Context:
 
 ### Step 5: Monitor
 
-Wait for all `reviewer-*-report.md` files.
+```
+team_status("review-{slug}")
+# Wait for isComplete
+```
 
 ### Step 6: Synthesize
 
@@ -111,28 +102,19 @@ Save to `plans/reports/review-{scope-slug}.md`:
 
 ```markdown
 # Review: <Scope>
-
 ## Summary
 {X} findings ({Y} critical, {Z} important, {W} moderate)
-
 ## CRITICAL Findings
-1. <finding> — <evidence> — <recommendation> (reviewer-{N})
-
 ## IMPORTANT Findings
-1. <finding> ...
-
 ## MODERATE Findings
-1. <finding> ...
-
 ## Action Items
 | # | Finding | Owner | Priority |
-|---|---------|-------|----------|
 ```
 
 ### Step 7: Cleanup & Report
 
-```bash
-rm -rf .team/review-{scope-slug}/
+```
+team_delete("review-{slug}")
 ```
 
 Tell user: `Review complete. {X} findings ({Y} critical). Report: {path}.`

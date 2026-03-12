@@ -1,149 +1,60 @@
 # Communication Protocol
 
-## Mode Detection
+## Custom Tools Communication
 
-At team creation, detect available communication infrastructure:
+All inter-agent communication uses custom tools in `.opencode/tools/`. No external dependencies required.
 
-```bash
-# Check if Agent Mail MCP is available
-am --version 2>/dev/null && AM_AVAILABLE=true || AM_AVAILABLE=false
-```
-
-| Agent Mail | Mode | Communication |
-|------------|------|---------------|
-| Available | **FULL** | Agent Mail MCP + file status |
-| Unavailable | **LITE** | File-based `.team/<team-name>/` directory only |
-
-## LITE Mode (File-Based — Always Available)
-
-### Directory Structure
-
-```
-.team/<team-name>/
-├── config.json
-│   {
-│     "team_name": "<team-name>",
-│     "template": "research|cook|review|debug",
-│     "mode": "LITE",
-│     "created": "<ISO timestamp>",
-│     "agents": [
-│       {"name": "researcher-1", "role": "researcher", "status": "active"}
-│     ]
-│   }
-├── tasks/
-│   └── task-001.json
-│       {
-│         "id": "task-001",
-│         "subject": "Research: Architecture patterns",
-│         "description": "Full task description...",
-│         "status": "pending|in_progress|completed",
-│         "owner": null | "researcher-1",
-│         "blockedBy": [],
-│         "created": "<ISO timestamp>",
-│         "updated": "<ISO timestamp>"
-│       }
-├── messages/
-│   └── 001-researcher-1-findings.md
-│       # Messages are markdown files
-│       # Naming: {seq}-{sender}-{subject-slug}.md
-│       # All agents can read all messages (shared inbox)
-├── status/
-│   └── researcher-1.json
-│       {
-│         "agent": "researcher-1",
-│         "status": "working|idle|done|error",
-│         "current_task": "task-001",
-│         "last_update": "<ISO timestamp>",
-│         "progress": "Analyzing architecture patterns..."
-│       }
-└── reports/
-    └── researcher-1-report.md
-        # Final deliverable. Presence = task complete.
-```
-
-### Worker Protocol (LITE)
+### Worker Protocol
 
 Each worker subagent follows this lifecycle:
 
 ```
-1. Read .team/<team-name>/tasks/ → find assigned task
-2. Write .team/<team-name>/status/{name}.json (status: "working")
+1. task_get(teamName, taskId) → read assigned task
+2. task_update(teamName, taskId, status: "in_progress", owner: agentName)
 3. Execute task
-4. Write findings to .team/<team-name>/messages/{seq}-{name}-{slug}.md
-5. Write final report to .team/<team-name>/reports/{name}-report.md
-6. Update .team/<team-name>/status/{name}.json (status: "done")
+4. message_send(teamName, from: name, to: "all", type: "finding", content: "...")
+5. Write final report to .team/{teamName}/reports/{name}-report.md
+6. task_update(teamName, taskId, status: "completed")
 7. Return summary string to orchestrator
 ```
 
-### Cross-Agent Reading (LITE)
-
-Workers CAN read other workers' messages:
+### Lead Protocol
 
 ```
-# Worker reads messages from other agents for context
-Read .team/<team-name>/messages/  → list all messages
-Read .team/<team-name>/messages/001-debugger-2-hypothesis.md → read specific finding
+1. team_create(teamName, template, agents)
+2. task_create(...) × N  (with blockedBy dependencies)
+3. Spawn loop (see SKILL.md core pattern)
+4. Read .team/{teamName}/reports/ for synthesis
+5. team_delete(teamName)
+```
+
+### Message Types
+
+| Type | Use Case |
+|------|----------|
+| `message` | DM between agents |
+| `broadcast` | All agents (to: "all") |
+| `finding` | Share discovery with team |
+| `blocker` | Report blocker to lead |
+| `complete` | Notify task completion |
+
+### Cross-Agent Reading
+
+Workers can read other workers' findings:
+
+```
+message_fetch(teamName, to: myName)  → messages addressed to me + broadcasts
+message_fetch(teamName, type: "finding") → all findings from all agents
 ```
 
 This enables adversarial debate (debug template) and collaborative synthesis.
 
-### Orchestrator Monitoring (LITE)
+### Orchestrator Monitoring
 
 ```
-# Poll every 30s
-ls .team/<team-name>/reports/    → count completed reports
-ls .team/<team-name>/status/     → check for stuck agents
-cat .team/<team-name>/status/*.json | jq '.status' → aggregate status
+team_status(teamName) → task summary, completion flag, report list
+task_list(teamName, status: "pending") → tasks ready to spawn
+task_list(teamName, status: "in_progress") → currently running tasks
 ```
 
-Completion = all expected report files present.
-
-## FULL Mode (Agent Mail + File Status)
-
-Extends LITE with Agent Mail MCP for richer messaging.
-
-### Additional Setup
-
-```bash
-# Register orchestrator
-am register_agent '{"project_key": "<path>", "program": "amp", "model": "<model>", "task_description": "Team orchestrator"}'
-
-# Pre-establish contacts with all workers
-am macro_contact_handshake '{"project_key": "<path>", "requester": "lead", "target": "researcher-1", "auto_accept": true}'
-```
-
-### Worker Protocol (FULL)
-
-Extends LITE protocol with Agent Mail messaging:
-
-```
-1. Register with Agent Mail: mcp__mcp_agent_mail__register_agent
-2. Establish contact: mcp__mcp_agent_mail__macro_contact_handshake
-3. Read .team/<team-name>/tasks/ → find assigned task
-4. Update status via both Agent Mail + .team/<team-name>/status/
-5. Send progress messages via Agent Mail
-6. Check inbox periodically: mcp__mcp_agent_mail__fetch_inbox
-7. Write report to .team/<team-name>/reports/ (same as LITE)
-8. Send completion message via Agent Mail
-```
-
-### Message Types (FULL)
-
-| Type | From | To | Purpose |
-|------|------|-----|---------|
-| Progress | Worker | Orchestrator | Status update |
-| Finding | Worker | All workers | Shared discovery |
-| Blocker | Worker | Orchestrator | Needs help |
-| Interface | Worker | Affected workers | API change |
-| Complete | Worker | Orchestrator | Task done |
-
-## Comparison
-
-| Feature | LITE | FULL |
-|---------|------|------|
-| Always available | Yes | No (needs MCP) |
-| Cross-agent messages | File read | Real-time inbox |
-| File reservations | Convention-based | MCP-enforced |
-| Progress monitoring | File polling | Inbox + polling |
-| Setup complexity | None | MCP registration |
-| Debugging | Read files | CLI + files |
+Completion = `team_status.isComplete === true` (all tasks completed or cancelled).

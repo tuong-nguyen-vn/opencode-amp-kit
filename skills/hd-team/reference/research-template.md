@@ -17,45 +17,33 @@ Default N=3. Derive from topic:
 
 Generate team name: `research-{topic-slug}` (kebab-case).
 
-```bash
-mkdir -p .team/research-{topic-slug}/{tasks,messages,status,reports}
 ```
-
-Write `.team/research-{topic-slug}/config.json`:
-```json
-{
-  "team_name": "research-{topic-slug}",
-  "template": "research",
-  "mode": "LITE",
-  "created": "<ISO timestamp>",
-  "agents": [
-    {"name": "researcher-1", "role": "researcher", "status": "active"},
-    {"name": "researcher-2", "role": "researcher", "status": "active"},
-    {"name": "researcher-3", "role": "researcher", "status": "active"}
-  ]
-}
+team_create(
+  teamName: "research-{topic-slug}",
+  template: "research",
+  agents: '[{"name":"researcher-1","role":"researcher"},{"name":"researcher-2","role":"researcher"},{"name":"researcher-3","role":"researcher"}]'
+)
 ```
 
 ### Step 3: Create Tasks
 
-Write `.team/research-{topic-slug}/tasks/task-{N}.json` for each researcher:
-```json
-{
-  "id": "task-001",
-  "subject": "Research: <angle-title>",
-  "description": "Investigate <angle> for topic: <topic>. Save report to .team/research-{topic-slug}/reports/researcher-{N}-report.md. Format: Executive summary, key findings, evidence, recommendations.",
-  "status": "pending",
-  "owner": "researcher-{N}",
-  "blockedBy": [],
-  "created": "<ISO timestamp>"
-}
 ```
+task_create(teamName: "research-{topic-slug}", subject: "Research: <angle>", description: "...", owner: "researcher-1")
+task_create(teamName: "research-{topic-slug}", subject: "Research: <angle>", description: "...", owner: "researcher-2")
+task_create(teamName: "research-{topic-slug}", subject: "Research: <angle>", description: "...", owner: "researcher-3")
+```
+
+All tasks have no blockedBy → status: "pending" automatically.
 
 ### Step 4: Spawn Researchers (Parallel)
 
-Spawn N researchers simultaneously via Task tool:
-
 ```
+# Get pending tasks
+task_list(teamName: "research-{topic-slug}", status: "pending")
+
+# For each pending task, claim + spawn:
+task_update(teamName, taskId, status: "in_progress")
+
 Task(
   subagent_type="researcher",
   description="Team research-{topic-slug}/researcher-{N}: <angle-title>",
@@ -65,14 +53,19 @@ You are researcher-{N} on team "research-{topic-slug}".
 ## Your Angle
 {angle_description}
 
+## Custom Tools
+- task_get("research-{topic-slug}", "{task-id}") → your assignment
+- message_send("research-{topic-slug}", from:"researcher-{N}", to:"all", type:"finding", content:"...") → share findings
+- message_fetch("research-{topic-slug}", to:"researcher-{N}") → read others' findings
+- task_update("research-{topic-slug}", "{task-id}", status:"completed") → mark done
+
 ## Protocol
-1. Read .team/research-{topic-slug}/tasks/task-{N}.json for your assignment
-2. Write .team/research-{topic-slug}/status/researcher-{N}.json: {"status": "working"}
-3. Research your angle thoroughly using available tools
-4. Write findings to .team/research-{topic-slug}/messages/{seq}-researcher-{N}-findings.md
-5. Read .team/research-{topic-slug}/messages/ for other researchers' findings (cross-pollinate)
-6. Write final report to .team/research-{topic-slug}/reports/researcher-{N}-report.md
-7. Update .team/research-{topic-slug}/status/researcher-{N}.json: {"status": "done"}
+1. task_get to read your assignment
+2. Research your angle thoroughly
+3. message_send findings to team (type: "finding")
+4. message_fetch to cross-pollinate with other researchers
+5. Write final report to .team/research-{topic-slug}/reports/researcher-{N}-report.md
+6. task_update status: "completed"
 
 ## Report Format
 # Research: <angle-title>
@@ -85,8 +78,6 @@ You are researcher-{N} on team "research-{topic-slug}".
 Team Context:
 - Work dir: {cwd}
 - Team name: research-{topic-slug}
-- Team dir: {cwd}/.team/research-{topic-slug}/
-- Mode: LITE
 - Your name: researcher-{N}
 - Your role: researcher
 """
@@ -95,48 +86,31 @@ Team Context:
 
 ### Step 5: Monitor
 
-Wait for all `researcher-*-report.md` files in `.team/research-{topic-slug}/reports/`.
-
-```bash
-# Check completion
-ls .team/research-{topic-slug}/reports/researcher-*-report.md | wc -l
-# Expected: N
+```
+team_status("research-{topic-slug}")
+# Check isComplete flag
 ```
 
 ### Step 6: Synthesize
 
-Read all researcher reports. Create synthesis:
+Read all researcher reports from `.team/research-{topic-slug}/reports/`.
 
 Save to `plans/reports/research-summary-{YYMMDD-HHMM}-{topic-slug}.md`:
 
 ```markdown
 # Research Summary: <Topic>
-
 ## Executive Summary
-<Synthesis of all findings>
-
 ## Key Findings
-<Merged, deduplicated findings from all angles>
-
 ## Comparative Analysis
-<Cross-angle insights>
-
 ## Recommendations
-<Prioritized recommendations>
-
 ## Unresolved Questions
-<Questions that remain open>
-
 ## Sources
-- Researcher 1: <angle 1>
-- Researcher 2: <angle 2>
-- Researcher 3: <angle 3>
 ```
 
 ### Step 7: Cleanup
 
-```bash
-rm -rf .team/research-{topic-slug}/
+```
+team_delete("research-{topic-slug}")
 ```
 
 ### Step 8: Report
