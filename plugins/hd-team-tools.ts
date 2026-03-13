@@ -1,49 +1,69 @@
 /**
  * HD-Team Tools Plugin for OpenCode
- * Lead-only orchestration: compound tools (team_spawn, team_complete)
- * + backward-compatible individual tools (team_*, task_*, message_*)
+ * Claude Code Agent Teams parity: per-agent inboxes, integer task IDs,
+ * bidirectional dependency tracking (blocks[] + blockedBy[]), file locking.
  *
  * Hooks:
  * - session.compacting: Injects active team state into compaction context
  */
 import { type Plugin, tool } from "@opencode-ai/plugin";
-import { readdir, mkdir, rm, rename } from "node:fs/promises";
+import { readdir, mkdir, rm, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-type TaskStatus = "pending" | "blocked" | "in_progress" | "completed" | "cancelled";
+type TaskStatus = "pending" | "in_progress" | "completed";
+
+type MessageType =
+  | "message"
+  | "broadcast"
+  | "shutdown_request"
+  | "shutdown_response"
+  | "plan_approval_response";
+
+interface TeamConfig {
+  name: string;
+  description: string;
+  createdAt: number;
+  leadAgentId: string;
+  members: TeamMember[];
+}
+
+interface TeamMember {
+  agentId: string;
+  name: string;
+  agentType: string;
+  model: string;
+  prompt?: string;
+  color?: string;
+  planModeRequired: boolean;
+  joinedAt: number;
+  cwd: string;
+  isActive: boolean;
+  taskSessionId?: string;
+}
 
 interface Task {
   id: string;
-  teamName: string;
   subject: string;
   description: string;
+  activeForm?: string;
   status: TaskStatus;
-  owner: string | null;
+  blocks: string[];
   blockedBy: string[];
-  fileScope: string[];
-  created: string;
-  updated: string;
+  owner?: string;
+  metadata?: Record<string, unknown>;
 }
 
-interface TeamConfig {
-  team_name: string;
-  template: string;
-  created: string;
-  agents: Array<{ name: string; role: string; status: string }>;
-}
-
-interface Message {
-  id: string;
-  teamName: string;
+interface InboxMessage {
   from: string;
-  to: string;
-  type: "message" | "broadcast" | "finding" | "blocker" | "complete";
-  content: string;
-  created: string;
+  text: string;
+  summary?: string;
+  timestamp: string;
+  color?: string;
+  read: boolean;
 }
 
 // ============================================================================
@@ -51,16 +71,20 @@ interface Message {
 // ============================================================================
 
 const TEAM_ROOT = ".team";
-const SAFE_ID = /^[a-z0-9-]+$/;
+const SAFE_NAME = /^[a-z0-9-]+$/;
 
-function validateId(id: string, label: string): void {
-  if (!SAFE_ID.test(id)) {
-    throw new Error(`Invalid ${label}: "${id}" (must be lowercase alphanumeric + hyphens)`);
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_RETRY_MS = 50;
+const LOCK_MAX_RETRIES = 100;
+
+function validateName(name: string, label: string): void {
+  if (!SAFE_NAME.test(name)) {
+    throw new Error(`Invalid ${label}: "${name}" (must be lowercase alphanumeric + hyphens)`);
   }
 }
 
 function teamDir(base: string, teamName: string): string {
-  validateId(teamName, "teamName");
+  validateName(teamName, "teamName");
   return join(base, TEAM_ROOT, teamName);
 }
 
@@ -85,23 +109,76 @@ async function readJson<T>(path: string): Promise<T> {
 async function listJsonFiles(dir: string): Promise<string[]> {
   if (!(await exists(dir))) return [];
   const entries = await readdir(dir);
-  return entries.filter((e) => e.endsWith(".json")).map((e) => join(dir, e));
-}
-
-function generateId(prefix: string): string {
-  const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 10);
-  return `${prefix}-${ts}-${rand}`;
-}
-
-function taskPath(base: string, teamName: string, taskId: string): string {
-  validateId(taskId, "taskId");
-  return join(teamDir(base, teamName), "tasks", `${taskId}.json`);
+  return entries
+    .filter((e) => e.endsWith(".json"))
+    .map((e) => join(dir, e));
 }
 
 async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
+
+// ---- File Locking ----
+
+async function withLock<T>(lockPath: string, fn: () => Promise<T>): Promise<T> {
+  let acquired = false;
+  for (let i = 0; i < LOCK_MAX_RETRIES; i++) {
+    if (await exists(lockPath)) {
+      const content = await Bun.file(lockPath).text().catch(() => "0");
+      const lockTime = parseInt(content, 10) || 0;
+      if (Date.now() - lockTime > LOCK_TIMEOUT_MS) {
+        // Stale lock — overwrite
+        await Bun.write(lockPath, Date.now().toString());
+        acquired = true;
+        break;
+      }
+      await Bun.sleep(LOCK_RETRY_MS);
+    } else {
+      await Bun.write(lockPath, Date.now().toString());
+      acquired = true;
+      break;
+    }
+  }
+
+  if (!acquired) {
+    throw new Error(`Failed to acquire lock: ${lockPath} (timed out after ${LOCK_MAX_RETRIES * LOCK_RETRY_MS}ms)`);
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await unlink(lockPath).catch(() => {});
+  }
+}
+
+// ---- Task ID Generation ----
+
+async function nextTaskId(tasksDir: string): Promise<string> {
+  const counterPath = join(tasksDir, ".counter");
+  let counter = 0;
+  if (await exists(counterPath)) {
+    const content = await Bun.file(counterPath).text();
+    counter = parseInt(content, 10) || 0;
+  }
+  counter++;
+  await Bun.write(counterPath, counter.toString());
+  return counter.toString();
+}
+
+// ---- Inbox Helpers ----
+
+async function readInbox(inboxPath: string): Promise<InboxMessage[]> {
+  if (!(await exists(inboxPath))) return [];
+  return readJson<InboxMessage[]>(inboxPath);
+}
+
+async function appendToInbox(inboxPath: string, message: InboxMessage): Promise<void> {
+  const messages = await readInbox(inboxPath);
+  messages.push(message);
+  await writeJsonAtomic(inboxPath, messages);
+}
+
+// ---- Task Loading ----
 
 async function loadAllTasks(base: string, teamName: string): Promise<Task[]> {
   const dir = join(teamDir(base, teamName), "tasks");
@@ -113,12 +190,18 @@ async function loadAllTasks(base: string, teamName: string): Promise<Task[]> {
   return tasks;
 }
 
-function hasCycle(newTaskId: string, blockedBy: string[], allTasks: Map<string, Task>): boolean {
+function taskFilePath(base: string, teamName: string, taskId: string): string {
+  return join(teamDir(base, teamName), "tasks", `${taskId}.json`);
+}
+
+// ---- Dependency Helpers ----
+
+function hasCycle(taskId: string, blockedBy: string[], allTasks: Map<string, Task>): boolean {
   const visited = new Set<string>();
   const queue = [...blockedBy];
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (current === newTaskId) return true;
+    if (current === taskId) return true;
     if (visited.has(current)) continue;
     visited.add(current);
     const task = allTasks.get(current);
@@ -127,15 +210,11 @@ function hasCycle(newTaskId: string, blockedBy: string[], allTasks: Map<string, 
   return false;
 }
 
-const VALID_TRANSITIONS: Record<string, TaskStatus[]> = {
-  pending: ["in_progress", "cancelled"],
-  blocked: ["cancelled"],
-  in_progress: ["completed", "cancelled"],
-  completed: [],
-  cancelled: [],
-};
-
-async function unblockDependents(base: string, teamName: string, completedTaskId: string): Promise<string[]> {
+async function unblockDependents(
+  base: string,
+  teamName: string,
+  completedTaskId: string,
+): Promise<string[]> {
   const unblocked: string[] = [];
   const allTasks = await loadAllTasks(base, teamName);
 
@@ -144,16 +223,16 @@ async function unblockDependents(base: string, teamName: string, completedTaskId
     if (!t.blockedBy.includes(completedTaskId)) continue;
 
     t.blockedBy = t.blockedBy.filter((bid) => bid !== completedTaskId);
-    if (t.blockedBy.length === 0 && t.status === "blocked") {
-      t.status = "pending";
+    if (t.blockedBy.length === 0 && t.status === "pending") {
       unblocked.push(t.id);
     }
-    t.updated = new Date().toISOString();
-    await writeJsonAtomic(join(teamDir(base, teamName), "tasks", `${t.id}.json`), t);
+    await writeJsonAtomic(taskFilePath(base, teamName, t.id), t);
   }
 
   return unblocked;
 }
+
+// ---- Team Summary ----
 
 async function getActiveTeamsSummary(base: string): Promise<string | null> {
   const root = join(base, TEAM_ROOT);
@@ -174,9 +253,12 @@ async function getActiveTeamsSummary(base: string): Promise<string | null> {
       const pending = tasks.filter((t) => t.status === "pending").length;
       const inProgress = tasks.filter((t) => t.status === "in_progress").length;
       const completed = tasks.filter((t) => t.status === "completed").length;
+      const members = config.members.filter((m) => m.isActive).length;
 
       if (pending > 0 || inProgress > 0) {
-        summaries.push(`- Team "${config.team_name}" (${config.template}): ${inProgress} in_progress, ${pending} pending, ${completed} completed`);
+        summaries.push(
+          `- Team "${config.name}" (${config.description}): ${members} active members, ${inProgress} in_progress, ${pending} pending, ${completed} completed`,
+        );
       }
     } catch {
       // Skip teams with corrupted/deleted data
@@ -198,7 +280,7 @@ export const HDTeamToolsPlugin: Plugin = async ({ directory }) => {
     // Hooks
     // ========================================================================
 
-    "experimental.session.compacting": async (input, output) => {
+    "experimental.session.compacting": async (_input, output) => {
       const teamSummary = await getActiveTeamsSummary(base);
       if (teamSummary) {
         output.context.push(`
@@ -217,223 +299,17 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
     // Custom Tools
     // ========================================================================
     tool: {
-      // ==== Compound Tools (Lead-Only) ====
-
-      team_spawn: tool({
-        description: "Create team + all tasks in one call. Sets non-blocked tasks to in_progress. Returns team config and created tasks.",
-        args: {
-          teamName: tool.schema.string().regex(/^[a-z0-9-]+$/).describe("Team name in kebab-case"),
-          template: tool.schema.string().describe("Template type: research, cook, review, debug, or custom"),
-          tasks: tool.schema.string().describe('JSON array: [{"subject":"...","description":"...","owner":"agent-1","role":"researcher","blockedBy":["task-id"],"fileScope":["glob"]}]'),
-        },
-        async execute(args, context) {
-          const dir = teamDir(context.directory, args.teamName);
-          if (await exists(join(dir, "config.json"))) {
-            return `Error: Team "${args.teamName}" already exists`;
-          }
-
-          let taskDefs: Array<{
-            subject: string;
-            description: string;
-            owner?: string;
-            role?: string;
-            blockedBy?: string[];
-            fileScope?: string[];
-          }>;
-          try {
-            taskDefs = JSON.parse(args.tasks);
-          } catch {
-            return "Error: Invalid tasks JSON";
-          }
-
-          if (!Array.isArray(taskDefs) || taskDefs.length === 0) {
-            return "Error: tasks must be a non-empty array";
-          }
-
-          // Create directories
-          await ensureDir(join(dir, "tasks"));
-          await ensureDir(join(dir, "messages"));
-          await ensureDir(join(dir, "reports"));
-
-          // Derive agents from tasks
-          const agents = taskDefs
-            .filter((t) => t.owner)
-            .map((t) => ({ name: t.owner!, role: t.role || "worker", status: "active" }));
-          const uniqueAgents = Array.from(new Map(agents.map((a) => [a.name, a])).values());
-
-          const config: TeamConfig = {
-            team_name: args.teamName,
-            template: args.template,
-            created: new Date().toISOString(),
-            agents: uniqueAgents,
-          };
-          await writeJsonAtomic(join(dir, "config.json"), config);
-
-          // Create tasks with generated IDs
-          const createdTasks: Task[] = [];
-          const idMap = new Map<number, string>(); // index → generated ID
-
-          // First pass: generate IDs
-          for (let i = 0; i < taskDefs.length; i++) {
-            idMap.set(i, generateId("task"));
-          }
-
-          // Second pass: resolve blockedBy references and create tasks
-          const now = new Date().toISOString();
-          try {
-            for (let i = 0; i < taskDefs.length; i++) {
-            const def = taskDefs[i];
-            const id = idMap.get(i)!;
-
-            // Resolve blockedBy — pure integer strings ("0","1") are index refs, others are literal IDs
-            let blockedBy: string[] = [];
-            if (def.blockedBy && def.blockedBy.length > 0) {
-              blockedBy = def.blockedBy.map((ref) => {
-                if (/^\d+$/.test(ref)) {
-                  const idx = parseInt(ref, 10);
-                  if (idMap.has(idx)) return idMap.get(idx)!;
-                  throw new Error(`Invalid blockedBy index "${ref}" — out of range (0-${taskDefs.length - 1})`);
-                }
-                return ref; // already an ID string
-              });
-            }
-
-            // Determine status based on active blockers
-            const activeBlockers = blockedBy.filter((bid) => {
-              const task = createdTasks.find((t) => t.id === bid);
-              return !task || (task.status !== "completed" && task.status !== "cancelled");
-            });
-
-            const task: Task = {
-              id,
-              teamName: args.teamName,
-              subject: def.subject,
-              description: def.description,
-              status: activeBlockers.length > 0 ? "blocked" : (def.owner ? "in_progress" : "pending"),
-              owner: def.owner ?? null,
-              blockedBy: activeBlockers,
-              fileScope: def.fileScope ?? [],
-              created: now,
-              updated: now,
-            };
-
-            await writeJsonAtomic(join(dir, "tasks", `${id}.json`), task);
-            createdTasks.push(task);
-          }
-          } catch (e) {
-            await rm(dir, { recursive: true, force: true });
-            return `Error: ${e instanceof Error ? e.message : String(e)}`;
-          }
-
-          // Cycle detection
-          const taskMap = new Map(createdTasks.map((t) => [t.id, t]));
-          for (const task of createdTasks) {
-            if (task.blockedBy.length > 0 && hasCycle(task.id, task.blockedBy, taskMap)) {
-              await rm(dir, { recursive: true, force: true });
-              return `Error: Circular dependency detected involving task "${task.subject}"`;
-            }
-          }
-
-          return JSON.stringify({ team: config, tasks: createdTasks }, null, 2);
-        },
-      }),
-
-      team_complete: tool({
-        description: "Bulk-complete tasks and write reports. Auto-unblocks dependents. Returns updated tasks and completion status.",
-        args: {
-          teamName: tool.schema.string().describe("Team name"),
-          results: tool.schema.string().describe('JSON array: [{"taskId":"...","status":"completed","summary":"...","report":"optional full report"}]'),
-        },
-        async execute(args, context) {
-          const dir = teamDir(context.directory, args.teamName);
-          if (!(await exists(join(dir, "config.json")))) {
-            return `Error: Team "${args.teamName}" not found`;
-          }
-
-          let results: Array<{
-            taskId: string;
-            status?: "completed" | "cancelled";
-            summary: string;
-            report?: string;
-          }>;
-          try {
-            results = JSON.parse(args.results);
-          } catch {
-            return "Error: Invalid results JSON";
-          }
-
-          if (!Array.isArray(results) || results.length === 0) {
-            return "Error: results must be a non-empty array";
-          }
-
-          const updated: Task[] = [];
-          const allUnblocked: string[] = [];
-          const errors: string[] = [];
-
-          for (const r of results) {
-            try {
-              validateId(r.taskId, "taskId");
-            } catch {
-              errors.push(`Invalid taskId: "${r.taskId}"`);
-              continue;
-            }
-
-            const taskFile = taskPath(context.directory, args.teamName, r.taskId);
-            if (!(await exists(taskFile))) {
-              errors.push(`Task "${r.taskId}" not found`);
-              continue;
-            }
-
-            const task = await readJson<Task>(taskFile);
-            const newStatus = r.status || "completed";
-
-            // Validate transition
-            const allowed = VALID_TRANSITIONS[task.status];
-            if (allowed && !allowed.includes(newStatus)) {
-              errors.push(`Invalid transition for ${r.taskId}: ${task.status} → ${newStatus}`);
-              continue;
-            }
-
-            task.status = newStatus;
-            task.updated = new Date().toISOString();
-            await writeJsonAtomic(taskFile, task);
-            updated.push(task);
-
-            // Write report if provided (use owner-taskId to avoid collisions)
-            if (r.report || r.summary) {
-              const reportContent = r.report || `# ${task.subject}\n\n${r.summary}`;
-              const reportName = `${task.owner || "unknown"}-${task.id}`;
-              const reportPath = join(dir, "reports", `${reportName}-report.md`);
-              const tmp = reportPath + ".tmp";
-              await Bun.write(tmp, reportContent);
-              await rename(tmp, reportPath);
-            }
-
-            // Unblock dependents
-            if (newStatus === "completed" || newStatus === "cancelled") {
-              const unblocked = await unblockDependents(context.directory, args.teamName, task.id);
-              allUnblocked.push(...unblocked);
-            }
-          }
-
-          // Check completion
-          const allTasks = await loadAllTasks(context.directory, args.teamName);
-          const isComplete = allTasks.length > 0 && allTasks.every(
-            (t) => t.status === "completed" || t.status === "cancelled"
-          );
-
-          return JSON.stringify({ updated, unblocked: allUnblocked, errors, isComplete }, null, 2);
-        },
-      }),
-
-      // ==== Backward-Compatible Tools ====
+      // ==== Team Tools ====
 
       team_create: tool({
-        description: "Create a new agent team with directory structure and config. Returns the team config.",
+        description:
+          "Create a new agent team with directory structure and CC-aligned config. Lead is automatically added as first member. Returns the team config.",
         args: {
-          teamName: tool.schema.string().regex(/^[a-z0-9-]+$/).describe("Team name in kebab-case"),
-          template: tool.schema.string().describe("Template type: research, cook, review, debug, or custom"),
-          agents: tool.schema.string().describe('JSON array of agents: [{"name":"dev-1","role":"developer"}]'),
+          teamName: tool.schema
+            .string()
+            .regex(/^[a-z0-9-]+$/)
+            .describe("Team name in kebab-case"),
+          description: tool.schema.string().describe("Team description"),
         },
         async execute(args, context) {
           const dir = teamDir(context.directory, args.teamName);
@@ -442,109 +318,42 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
           }
 
           await ensureDir(join(dir, "tasks"));
-          await ensureDir(join(dir, "messages"));
+          await ensureDir(join(dir, "inboxes"));
           await ensureDir(join(dir, "reports"));
 
-          let agents: Array<{ name: string; role: string }>;
-          try {
-            agents = JSON.parse(args.agents);
-          } catch {
-            return "Error: Invalid agents JSON";
-          }
-
-          if (!Array.isArray(agents) || !agents.every((a) => typeof a.name === "string" && typeof a.role === "string")) {
-            return 'Error: agents must be [{name: string, role: string}, ...]';
-          }
+          const now = Date.now();
+          const leadId = `team-lead@${args.teamName}`;
 
           const config: TeamConfig = {
-            team_name: args.teamName,
-            template: args.template,
-            created: new Date().toISOString(),
-            agents: agents.map((a) => ({ ...a, status: "idle" })),
+            name: args.teamName,
+            description: args.description,
+            createdAt: now,
+            leadAgentId: leadId,
+            members: [
+              {
+                agentId: leadId,
+                name: "team-lead",
+                agentType: "team-lead",
+                model: "unknown",
+                planModeRequired: false,
+                joinedAt: now,
+                cwd: context.directory,
+                isActive: true,
+              },
+            ],
           };
 
           await writeJsonAtomic(join(dir, "config.json"), config);
+
+          // Create lead inbox
+          await writeJsonAtomic(join(dir, "inboxes", "team-lead.json"), []);
+
           return JSON.stringify(config, null, 2);
         },
       }),
 
-      team_status: tool({
-        description: "Get team status: config, task summary by status, message count, reports, completion flag.",
-        args: {
-          teamName: tool.schema.string().describe("Team name"),
-        },
-        async execute(args, context) {
-          const dir = teamDir(context.directory, args.teamName);
-          if (!(await exists(join(dir, "config.json")))) {
-            return `Error: Team "${args.teamName}" not found`;
-          }
-
-          const config = await readJson<TeamConfig>(join(dir, "config.json"));
-          const taskFiles = await listJsonFiles(join(dir, "tasks"));
-          const msgFiles = await listJsonFiles(join(dir, "messages"));
-
-          const reportDir = join(dir, "reports");
-          const reports = (await exists(reportDir))
-            ? (await readdir(reportDir)).filter((f) => !f.startsWith("."))
-            : [];
-
-          const summary = { pending: 0, blocked: 0, in_progress: 0, completed: 0, cancelled: 0 };
-          for (const f of taskFiles) {
-            const task = await readJson<Task>(f);
-            if (task.status in summary) {
-              summary[task.status as keyof typeof summary]++;
-            }
-          }
-
-          const total = Object.values(summary).reduce((a, b) => a + b, 0);
-          const isComplete = total > 0 && summary.pending === 0 && summary.blocked === 0 && summary.in_progress === 0;
-
-          return JSON.stringify({ config, taskSummary: summary, messageCount: msgFiles.length, reports, isComplete }, null, 2);
-        },
-      }),
-
-      team_list: tool({
-        description: "List all active teams with basic info.",
-        args: {},
-        async execute(args, context) {
-          const root = join(context.directory, TEAM_ROOT);
-          if (!(await exists(root))) return "No teams found";
-
-          const entries = await readdir(root, { withFileTypes: true });
-          const teams = [];
-
-          for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const configPath = join(root, entry.name, "config.json");
-            if (!(await exists(configPath))) continue;
-
-            const config = await readJson<TeamConfig>(configPath);
-            const taskFiles = await listJsonFiles(join(root, entry.name, "tasks"));
-
-            let allDone = taskFiles.length > 0;
-            for (const f of taskFiles) {
-              const task = await readJson<Task>(f);
-              if (task.status !== "completed" && task.status !== "cancelled") {
-                allDone = false;
-                break;
-              }
-            }
-
-            teams.push({
-              teamName: config.team_name,
-              template: config.template,
-              created: config.created,
-              agentCount: config.agents.length,
-              isComplete: taskFiles.length > 0 && allDone,
-            });
-          }
-
-          return teams.length > 0 ? JSON.stringify(teams, null, 2) : "No teams found";
-        },
-      }),
-
       team_delete: tool({
-        description: "Delete a team and all its data (tasks, messages, reports).",
+        description: "Delete a team and all its data (tasks, inboxes, reports).",
         args: {
           teamName: tool.schema.string().describe("Team name to delete"),
         },
@@ -561,108 +370,277 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
       // ==== Task Tools ====
 
       task_create: tool({
-        description: "Create a new task in a team. Auto-sets status to pending (no blockers) or blocked (has blockers). Returns created task.",
+        description:
+          "Create a task with auto-increment integer ID. Supports optional dependencies (addBlocks/addBlockedBy) at creation. If blockedBy tasks are not completed, status stays pending. Returns created task.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
           subject: tool.schema.string().describe("Task subject, <60 chars, imperative"),
           description: tool.schema.string().describe("Task description"),
-          owner: tool.schema.string().optional().describe("Agent name to assign"),
-          blockedBy: tool.schema.string().optional().describe('JSON array of task IDs this depends on, e.g. ["task-001"]'),
-          fileScope: tool.schema.string().optional().describe('JSON array of glob patterns, e.g. ["src/auth/**"]'),
+          activeForm: tool.schema.string().optional().describe("Spinner text when in_progress"),
+          addBlocks: tool.schema
+            .string()
+            .optional()
+            .describe('JSON array of task IDs this task blocks, e.g. ["3","4"]'),
+          addBlockedBy: tool.schema
+            .string()
+            .optional()
+            .describe('JSON array of task IDs that block this task, e.g. ["1"]'),
+          metadata: tool.schema.string().optional().describe("JSON object of arbitrary metadata"),
         },
         async execute(args, context) {
           const dir = teamDir(context.directory, args.teamName);
-          if (!(await exists(join(dir, "config.json")))) return `Error: Team "${args.teamName}" not found`;
+          if (!(await exists(join(dir, "config.json")))) {
+            return `Error: Team "${args.teamName}" not found`;
+          }
 
           const tasksDir = join(dir, "tasks");
           await ensureDir(tasksDir);
+          const tasksLockPath = join(tasksDir, ".lock");
 
-          const id = generateId("task");
-          let blockedBy: string[] = [];
-          let fileScope: string[] = [];
+          return withLock(tasksLockPath, async () => {
+            const id = await nextTaskId(tasksDir);
 
-          if (args.blockedBy) {
-            try { blockedBy = JSON.parse(args.blockedBy); }
-            catch { return "Error: Invalid blockedBy JSON"; }
-          }
-          if (args.fileScope) {
-            try { fileScope = JSON.parse(args.fileScope); }
-            catch { return "Error: Invalid fileScope JSON"; }
-          }
+            let addBlocks: string[] = [];
+            let addBlockedBy: string[] = [];
+            let metadata: Record<string, unknown> | undefined;
 
-          const allTasks = await loadAllTasks(context.directory, args.teamName);
-          const taskMap = new Map(allTasks.map((t) => [t.id, t]));
+            if (args.addBlocks) {
+              try {
+                addBlocks = JSON.parse(args.addBlocks);
+              } catch {
+                return "Error: Invalid addBlocks JSON";
+              }
+            }
+            if (args.addBlockedBy) {
+              try {
+                addBlockedBy = JSON.parse(args.addBlockedBy);
+              } catch {
+                return "Error: Invalid addBlockedBy JSON";
+              }
+            }
+            if (args.metadata) {
+              try {
+                metadata = JSON.parse(args.metadata);
+              } catch {
+                return "Error: Invalid metadata JSON";
+              }
+            }
 
-          for (const bid of blockedBy) {
-            if (!taskMap.has(bid)) return `Error: Blocker task "${bid}" not found`;
-          }
+            const allTasks = await loadAllTasks(context.directory, args.teamName);
+            const taskMap = new Map(allTasks.map((t) => [t.id, t]));
 
-          if (blockedBy.length > 0 && hasCycle(id, blockedBy, taskMap)) {
-            return `Error: Circular dependency detected for ${id}`;
-          }
+            // Validate referenced tasks exist
+            for (const bid of addBlockedBy) {
+              if (!taskMap.has(bid)) return `Error: Blocker task "${bid}" not found`;
+            }
+            for (const bid of addBlocks) {
+              if (!taskMap.has(bid)) return `Error: Blocked task "${bid}" not found`;
+            }
 
-          const activeBlockers = blockedBy.filter((bid) => {
-            const t = taskMap.get(bid);
-            return t && t.status !== "completed" && t.status !== "cancelled";
+            // Cycle detection
+            if (addBlockedBy.length > 0 && hasCycle(id, addBlockedBy, taskMap)) {
+              return `Error: Circular dependency detected for task ${id}`;
+            }
+
+            // Determine if any blockers are still active
+            const hasActiveBlockers = addBlockedBy.some((bid) => {
+              const t = taskMap.get(bid);
+              return t && t.status !== "completed";
+            });
+
+            const task: Task = {
+              id,
+              subject: args.subject,
+              description: args.description,
+              ...(args.activeForm && { activeForm: args.activeForm }),
+              status: "pending",
+              blocks: addBlocks,
+              blockedBy: addBlockedBy,
+              ...(metadata && { metadata }),
+            };
+
+            await writeJsonAtomic(join(tasksDir, `${id}.json`), task);
+
+            // Sync bidirectional deps: add this task's ID to target tasks
+            // addBlockedBy: this task is blocked by targets → targets' blocks[] should include this task
+            for (const targetId of addBlockedBy) {
+              const targetPath = taskFilePath(context.directory, args.teamName, targetId);
+              const target = await readJson<Task>(targetPath);
+              if (!target.blocks.includes(id)) {
+                target.blocks.push(id);
+                await writeJsonAtomic(targetPath, target);
+              }
+            }
+
+            // addBlocks: this task blocks targets → targets' blockedBy[] should include this task
+            for (const targetId of addBlocks) {
+              const targetPath = taskFilePath(context.directory, args.teamName, targetId);
+              const target = await readJson<Task>(targetPath);
+              if (!target.blockedBy.includes(id)) {
+                target.blockedBy.push(id);
+                await writeJsonAtomic(targetPath, target);
+              }
+            }
+
+            return JSON.stringify(task, null, 2);
           });
-
-          const now = new Date().toISOString();
-          const task: Task = {
-            id,
-            teamName: args.teamName,
-            subject: args.subject,
-            description: args.description,
-            status: activeBlockers.length > 0 ? "blocked" : "pending",
-            owner: args.owner ?? null,
-            blockedBy: activeBlockers,
-            fileScope,
-            created: now,
-            updated: now,
-          };
-
-          await writeJsonAtomic(join(tasksDir, `${id}.json`), task);
-          return JSON.stringify(task, null, 2);
         },
       }),
 
       task_update: tool({
-        description: "Update task status/owner. On completion/cancellation, auto-unblocks dependent tasks. Returns updated task + list of unblocked task IDs.",
+        description:
+          "Update task fields, manage dependencies, auto-unblock. Status transitions: pending→in_progress, pending→completed, in_progress→completed. On completion: auto-unblocks dependents. Returns {task, unblocked[]}.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
-          taskId: tool.schema.string().describe("Task ID"),
-          status: tool.schema.enum(["in_progress", "completed", "cancelled"]).optional().describe("New status"),
-          owner: tool.schema.string().optional().describe("Agent name"),
+          taskId: tool.schema.string().describe("Task ID (integer string)"),
+          status: tool.schema
+            .enum(["pending", "in_progress", "completed"])
+            .optional()
+            .describe("New status"),
+          subject: tool.schema.string().optional().describe("New subject"),
+          description: tool.schema.string().optional().describe("New description"),
+          activeForm: tool.schema.string().optional().describe("Spinner text when in_progress"),
+          owner: tool.schema.string().optional().describe("Agent name claiming this task"),
+          addBlocks: tool.schema
+            .string()
+            .optional()
+            .describe('JSON array of task IDs to add to blocks[]'),
+          addBlockedBy: tool.schema
+            .string()
+            .optional()
+            .describe('JSON array of task IDs to add to blockedBy[]'),
+          metadata: tool.schema
+            .string()
+            .optional()
+            .describe("JSON object to merge into metadata"),
         },
         async execute(args, context) {
-          const taskFile = taskPath(context.directory, args.teamName, args.taskId);
-          if (!(await exists(taskFile))) {
-            return `Error: Task "${args.taskId}" not found in team "${args.teamName}"`;
+          const dir = teamDir(context.directory, args.teamName);
+          if (!(await exists(join(dir, "config.json")))) {
+            return `Error: Team "${args.teamName}" not found`;
           }
 
-          const task = await readJson<Task>(taskFile);
+          const tasksDir = join(dir, "tasks");
+          const tasksLockPath = join(tasksDir, ".lock");
 
-          if (args.status) {
-            const newStatus = args.status as TaskStatus;
-            const allowed = VALID_TRANSITIONS[task.status];
-            if (!allowed || !allowed.includes(newStatus)) {
-              return `Error: Invalid transition ${task.status} → ${newStatus}`;
+          return withLock(tasksLockPath, async () => {
+            const tPath = taskFilePath(context.directory, args.teamName, args.taskId);
+            if (!(await exists(tPath))) {
+              return `Error: Task "${args.taskId}" not found in team "${args.teamName}"`;
             }
-            if (newStatus === "in_progress" && task.status === "blocked" && task.blockedBy.length > 0) {
-              return `Error: Cannot start task with unresolved blockers: ${task.blockedBy.join(", ")}`;
+
+            const task = await readJson<Task>(tPath);
+
+            // Status transition validation
+            if (args.status) {
+              const validTransitions: Record<string, TaskStatus[]> = {
+                pending: ["in_progress", "completed"],
+                in_progress: ["completed"],
+                completed: [],
+              };
+              const allowed = validTransitions[task.status];
+              if (!allowed || !allowed.includes(args.status as TaskStatus)) {
+                return `Error: Invalid transition ${task.status} → ${args.status}`;
+              }
+
+              // Cannot start if still blocked
+              if (
+                args.status === "in_progress" &&
+                task.blockedBy.length > 0
+              ) {
+                // Check if blockers are actually still active
+                const activeBlockers: string[] = [];
+                for (const bid of task.blockedBy) {
+                  const blockerPath = taskFilePath(context.directory, args.teamName, bid);
+                  if (await exists(blockerPath)) {
+                    const blocker = await readJson<Task>(blockerPath);
+                    if (blocker.status !== "completed") {
+                      activeBlockers.push(bid);
+                    }
+                  }
+                }
+                if (activeBlockers.length > 0) {
+                  return `Error: Cannot start task with unresolved blockers: ${activeBlockers.join(", ")}`;
+                }
+              }
+
+              task.status = args.status as TaskStatus;
             }
-            task.status = newStatus;
-          }
 
-          if (args.owner !== undefined) task.owner = args.owner;
-          task.updated = new Date().toISOString();
-          await writeJsonAtomic(taskFile, task);
+            if (args.subject !== undefined) task.subject = args.subject;
+            if (args.description !== undefined) task.description = args.description;
+            if (args.activeForm !== undefined) task.activeForm = args.activeForm;
+            if (args.owner !== undefined) task.owner = args.owner;
 
-          let unblocked: string[] = [];
-          if (task.status === "completed" || task.status === "cancelled") {
-            unblocked = await unblockDependents(context.directory, args.teamName, task.id);
-          }
+            // Merge metadata
+            if (args.metadata) {
+              let newMeta: Record<string, unknown>;
+              try {
+                newMeta = JSON.parse(args.metadata);
+              } catch {
+                return "Error: Invalid metadata JSON";
+              }
+              task.metadata = { ...task.metadata, ...newMeta };
+            }
 
-          return JSON.stringify({ task, unblocked }, null, 2);
+            // Handle addBlocks
+            if (args.addBlocks) {
+              let newBlocks: string[];
+              try {
+                newBlocks = JSON.parse(args.addBlocks);
+              } catch {
+                return "Error: Invalid addBlocks JSON";
+              }
+              for (const targetId of newBlocks) {
+                if (!task.blocks.includes(targetId)) {
+                  task.blocks.push(targetId);
+                }
+                // Sync: add this task to target's blockedBy
+                const targetPath = taskFilePath(context.directory, args.teamName, targetId);
+                if (await exists(targetPath)) {
+                  const target = await readJson<Task>(targetPath);
+                  if (!target.blockedBy.includes(task.id)) {
+                    target.blockedBy.push(task.id);
+                    await writeJsonAtomic(targetPath, target);
+                  }
+                }
+              }
+            }
+
+            // Handle addBlockedBy
+            if (args.addBlockedBy) {
+              let newBlockedBy: string[];
+              try {
+                newBlockedBy = JSON.parse(args.addBlockedBy);
+              } catch {
+                return "Error: Invalid addBlockedBy JSON";
+              }
+              for (const targetId of newBlockedBy) {
+                if (!task.blockedBy.includes(targetId)) {
+                  task.blockedBy.push(targetId);
+                }
+                // Sync: add this task to target's blocks
+                const targetPath = taskFilePath(context.directory, args.teamName, targetId);
+                if (await exists(targetPath)) {
+                  const target = await readJson<Task>(targetPath);
+                  if (!target.blocks.includes(task.id)) {
+                    target.blocks.push(task.id);
+                    await writeJsonAtomic(targetPath, target);
+                  }
+                }
+              }
+            }
+
+            await writeJsonAtomic(tPath, task);
+
+            // Auto-unblock on completion
+            let unblocked: string[] = [];
+            if (task.status === "completed") {
+              unblocked = await unblockDependents(context.directory, args.teamName, task.id);
+            }
+
+            return JSON.stringify({ task, unblocked }, null, 2);
+          });
         },
       }),
 
@@ -670,32 +648,30 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
         description: "Get a single task by ID.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
-          taskId: tool.schema.string().describe("Task ID"),
+          taskId: tool.schema.string().describe("Task ID (integer string)"),
         },
         async execute(args, context) {
-          const taskFile = taskPath(context.directory, args.teamName, args.taskId);
-          if (!(await exists(taskFile))) {
+          const tPath = taskFilePath(context.directory, args.teamName, args.taskId);
+          if (!(await exists(tPath))) {
             return `Error: Task "${args.taskId}" not found in team "${args.teamName}"`;
           }
-          return JSON.stringify(await readJson<Task>(taskFile), null, 2);
+          return JSON.stringify(await readJson<Task>(tPath), null, 2);
         },
       }),
 
       task_list: tool({
-        description: "List tasks in a team, optionally filtered by status and/or owner.",
+        description: "List all tasks in a team with full details, sorted by integer ID.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
-          status: tool.schema.string().optional().describe("Filter by status: pending, blocked, in_progress, completed, cancelled"),
-          owner: tool.schema.string().optional().describe("Filter by owner agent name"),
         },
         async execute(args, context) {
           const dir = teamDir(context.directory, args.teamName);
-          if (!(await exists(join(dir, "config.json")))) return `Error: Team "${args.teamName}" not found`;
+          if (!(await exists(join(dir, "config.json")))) {
+            return `Error: Team "${args.teamName}" not found`;
+          }
 
-          let tasks = await loadAllTasks(context.directory, args.teamName);
-          if (args.status) tasks = tasks.filter((t) => t.status === args.status);
-          if (args.owner) tasks = tasks.filter((t) => t.owner === args.owner);
-          tasks.sort((a, b) => a.id.localeCompare(b.id));
+          const tasks = await loadAllTasks(context.directory, args.teamName);
+          tasks.sort((a, b) => parseInt(a.id, 10) - parseInt(b.id, 10));
           return tasks.length > 0 ? JSON.stringify(tasks, null, 2) : "No tasks found";
         },
       }),
@@ -703,46 +679,90 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
       // ==== Message Tools ====
 
       message_send: tool({
-        description: 'Send a message to an agent or broadcast to all. Types: message, broadcast, finding, blocker, complete.',
+        description:
+          "Send a message to a recipient's inbox or broadcast to all agents. Types: message, broadcast, shutdown_request, shutdown_response, plan_approval_response. Returns {sent: true, recipients: [...]}.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
-          from: tool.schema.string().describe("Sender agent name"),
-          to: tool.schema.string().describe('Recipient agent name or "all" for broadcast'),
-          type: tool.schema.enum(["message", "broadcast", "finding", "blocker", "complete"]).describe("Message type"),
-          content: tool.schema.string().describe("Message content"),
+          type: tool.schema
+            .enum([
+              "message",
+              "broadcast",
+              "shutdown_request",
+              "shutdown_response",
+              "plan_approval_response",
+            ])
+            .describe("Message type"),
+          recipient: tool.schema
+            .string()
+            .optional()
+            .describe("Recipient agent name (required for non-broadcast types)"),
+          content: tool.schema.string().describe("Message content (markdown)"),
+          summary: tool.schema.string().optional().describe("5-10 word preview"),
+          from: tool.schema.string().optional().describe("Sender name (defaults to team-lead)"),
         },
         async execute(args, context) {
           const dir = teamDir(context.directory, args.teamName);
-          if (!(await exists(join(dir, "config.json")))) {
+          const configPath = join(dir, "config.json");
+          if (!(await exists(configPath))) {
             return `Error: Team "${args.teamName}" not found`;
           }
 
-          const msgDir = join(dir, "messages");
-          await ensureDir(msgDir);
+          const sender = args.from || "team-lead";
+          const inboxesDir = join(dir, "inboxes");
+          await ensureDir(inboxesDir);
+          const inboxesLockPath = join(inboxesDir, ".lock");
 
-          const id = generateId("msg");
-          const msg: Message = {
-            id,
-            teamName: args.teamName,
-            from: args.from,
-            to: args.to,
-            type: args.type,
-            content: args.content,
-            created: new Date().toISOString(),
+          const message: InboxMessage = {
+            from: sender,
+            text: args.content,
+            ...(args.summary && { summary: args.summary }),
+            timestamp: new Date().toISOString(),
+            read: false,
           };
 
-          await writeJsonAtomic(join(msgDir, `${id}.json`), msg);
-          return JSON.stringify({ sent: true, id: msg.id }, null, 2);
+          if (args.type === "broadcast") {
+            // Broadcast to all members
+            const config = await readJson<TeamConfig>(configPath);
+            const recipients: string[] = [];
+
+            return withLock(inboxesLockPath, async () => {
+              for (const member of config.members) {
+                if (member.name === sender) continue;
+                const inboxPath = join(inboxesDir, `${member.name}.json`);
+                await appendToInbox(inboxPath, message);
+                recipients.push(member.name);
+              }
+              return JSON.stringify({ sent: true, recipients }, null, 2);
+            });
+          } else {
+            // Direct message
+            if (!args.recipient) {
+              return "Error: recipient is required for non-broadcast messages";
+            }
+
+            return withLock(inboxesLockPath, async () => {
+              const inboxPath = join(inboxesDir, `${args.recipient}.json`);
+              await appendToInbox(inboxPath, message);
+              return JSON.stringify({ sent: true, recipients: [args.recipient] }, null, 2);
+            });
+          }
         },
       }),
 
       message_fetch: tool({
-        description: "Fetch messages for an agent. Returns broadcasts (to=all) plus DMs. Filter by type and since timestamp.",
+        description:
+          "Fetch messages from an agent's inbox. Optionally filter by timestamp and mark as read.",
         args: {
           teamName: tool.schema.string().describe("Team name"),
-          to: tool.schema.string().optional().describe("Recipient filter — returns messages to this agent + broadcasts"),
-          type: tool.schema.enum(["message", "broadcast", "finding", "blocker", "complete"]).optional().describe("Filter by type"),
-          since: tool.schema.string().optional().describe("ISO timestamp — return only messages after this time"),
+          agent: tool.schema.string().describe("Agent name whose inbox to read"),
+          since: tool.schema
+            .string()
+            .optional()
+            .describe("ISO timestamp — return only messages after this time"),
+          markRead: tool.schema
+            .boolean()
+            .optional()
+            .describe("Mark fetched messages as read (default false)"),
         },
         async execute(args, context) {
           const dir = teamDir(context.directory, args.teamName);
@@ -750,27 +770,126 @@ Use team_status(teamName) to get full details. Continue any in-progress tasks.
             return `Error: Team "${args.teamName}" not found`;
           }
 
-          const msgDir = join(dir, "messages");
-          const files = await listJsonFiles(msgDir);
-          let messages: Message[] = [];
+          const inboxPath = join(dir, "inboxes", `${args.agent}.json`);
+          let messages = await readInbox(inboxPath);
 
-          for (const f of files) {
-            messages.push(await readJson<Message>(f));
-          }
-
-          if (args.to) {
-            messages = messages.filter((m) => m.to === args.to || m.to === "all");
-          }
-          if (args.type) {
-            messages = messages.filter((m) => m.type === args.type);
-          }
           if (args.since) {
             const sinceDate = new Date(args.since);
-            messages = messages.filter((m) => new Date(m.created) > sinceDate);
+            messages = messages.filter((m) => new Date(m.timestamp) > sinceDate);
           }
 
-          messages.sort((a, b) => a.created.localeCompare(b.created));
+          if (args.markRead && messages.length > 0) {
+            // Re-read full inbox, mark matching messages as read, write back
+            const allMessages = await readInbox(inboxPath);
+            const sinceDate = args.since ? new Date(args.since) : null;
+            let changed = false;
+            for (const m of allMessages) {
+              if (sinceDate && new Date(m.timestamp) <= sinceDate) continue;
+              if (!m.read) {
+                m.read = true;
+                changed = true;
+              }
+            }
+            if (changed) {
+              await writeJsonAtomic(inboxPath, allMessages);
+            }
+          }
+
+          messages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
           return messages.length > 0 ? JSON.stringify(messages, null, 2) : "No messages found";
+        },
+      }),
+
+      // ==== Team Status Tools ====
+
+      team_status: tool({
+        description:
+          "Get team status: config, task summary by status, message counts per agent, reports, completion flag.",
+        args: {
+          teamName: tool.schema.string().describe("Team name"),
+        },
+        async execute(args, context) {
+          const dir = teamDir(context.directory, args.teamName);
+          if (!(await exists(join(dir, "config.json")))) {
+            return `Error: Team "${args.teamName}" not found`;
+          }
+
+          const config = await readJson<TeamConfig>(join(dir, "config.json"));
+          const tasks = await loadAllTasks(context.directory, args.teamName);
+
+          const summary = { pending: 0, in_progress: 0, completed: 0 };
+          for (const t of tasks) {
+            if (t.status in summary) {
+              summary[t.status as keyof typeof summary]++;
+            }
+          }
+
+          // Count messages per agent
+          const inboxesDir = join(dir, "inboxes");
+          const messageCounts: Record<string, { total: number; unread: number }> = {};
+          if (await exists(inboxesDir)) {
+            const inboxFiles = await listJsonFiles(inboxesDir);
+            for (const f of inboxFiles) {
+              const agentName = f.split("/").pop()!.replace(".json", "");
+              const messages = await readInbox(f);
+              messageCounts[agentName] = {
+                total: messages.length,
+                unread: messages.filter((m) => !m.read).length,
+              };
+            }
+          }
+
+          const reportDir = join(dir, "reports");
+          const reports = (await exists(reportDir))
+            ? (await readdir(reportDir)).filter((f) => !f.startsWith("."))
+            : [];
+
+          const total = Object.values(summary).reduce((a, b) => a + b, 0);
+          const isComplete =
+            total > 0 && summary.pending === 0 && summary.in_progress === 0;
+
+          return JSON.stringify(
+            { config, taskSummary: summary, messageCounts, reports, isComplete },
+            null,
+            2,
+          );
+        },
+      }),
+
+      team_list: tool({
+        description: "List all teams with basic info.",
+        args: {},
+        async execute(_args, context) {
+          const root = join(context.directory, TEAM_ROOT);
+          if (!(await exists(root))) return "No teams found";
+
+          const entries = await readdir(root, { withFileTypes: true });
+          const teams = [];
+
+          for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const configPath = join(root, entry.name, "config.json");
+            if (!(await exists(configPath))) continue;
+
+            const config = await readJson<TeamConfig>(configPath);
+            const tasks = await loadAllTasks(context.directory, entry.name);
+
+            const pending = tasks.filter((t) => t.status === "pending").length;
+            const inProgress = tasks.filter((t) => t.status === "in_progress").length;
+            const completed = tasks.filter((t) => t.status === "completed").length;
+            const isComplete = tasks.length > 0 && pending === 0 && inProgress === 0;
+
+            teams.push({
+              name: config.name,
+              description: config.description,
+              createdAt: config.createdAt,
+              memberCount: config.members.length,
+              taskSummary: { pending, in_progress: inProgress, completed },
+              isComplete,
+            });
+          }
+
+          return teams.length > 0 ? JSON.stringify(teams, null, 2) : "No teams found";
         },
       }),
     },
