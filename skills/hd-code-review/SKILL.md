@@ -3,22 +3,56 @@ name: hd-code-review
 description: "Review code changes between branches with a skeptical gatekeeper mindset. Reviews git diff across 12 aspects (requirements, correctness, possible breakage, better approach, redundancy, tests, security, breaking changes, implication assessment, code quality, completeness, architecture & design). Reads CODING_STANDARDS.md for project-specific style rules and REVIEW_STANDARDS.md for tech-stack presets, aspect escalations, and custom aspects. Outputs Approved / Approved with Comments / Changes Requested verdict."
 license: proprietary
 metadata:
-  version: "1.0.0"
+  version: "2.0.0"
   copyright: "© HDWEBSOFT. All rights reserved."
 ---
 
 # Code Review Skill
 
-> [IMPORTANT] This skill orchestrates 3 parallel subagents (`code-review-security`, `code-review-logic`, `code-review-quality`)
-> that each embed the relevant aspect checklists from `reference/review-checklist.md`.
+> [IMPORTANT] This skill orchestrates 3 parallel reviewer agents via **Agent Team Tools**
+> (`team_create`, `task_create`, `task_list`, `message_send/fetch`, `team_delete`).
+> Each reviewer runs as an independent worker with its own context, communicating findings
+> back to the lead via the team messaging system.
 > It does NOT replace `hd-security-review` for deep security analysis.
 > For comprehensive security review, run `/hd-security-review code-review` separately.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CODE REVIEW LEAD                            │
+│                         (This Agent)                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  Phases 0-4: Arg parse, standards, diff, task context, assembly     │
+│  Phase 4.5:  Create team → create 3 tasks → spawn 3 workers        │
+│  Phase 5:    Collect results via message_fetch → gate check         │
+│  Phase 6+:   Verdict, file output, copy menu                       │
+└─────────────────────────────────────────────────────────────────────┘
+           │  team_create + task_create + Task("worker") × 3
+           ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  reviewer-sec│  │  reviewer-log│  │  reviewer-qua│
+│  Aspects:    │  │  Aspects:    │  │  Aspects:    │
+│  3, 7, 8     │  │  2, 6, 1, 11 │  │  4,5,9,10,12 │
+│  + T1 custom │  │  + T1 custom │  │  + T2 custom │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └─────────────────┼─────────────────┘
+                         ▼
+              ┌─────────────────────┐
+              │  Agent Team Tools    │
+              │  • task_update       │
+              │  • message_send      │
+              │  • message_fetch     │
+              │  • team_status       │
+              └─────────────────────┘
+```
 
 ## Pipeline
 
 ```
 INPUT → Arg Parse → Standards Load → Diff Fetch → Task Context →
-Context Assembly → [code-review-security ‖ code-review-logic ‖ code-review-quality] → Gate → Verdict → File Output → (TODO: Post to VCS)
+Context Assembly → Team Create → [reviewer-sec ‖ reviewer-log ‖ reviewer-qua] → Gate → Verdict → File Output → Team Cleanup
 ```
 
 ---
@@ -266,9 +300,9 @@ Rules:
 
 ---
 
-## Phase 4.5: Parallel Agent Review
+## Phase 4.5: Parallel Agent Team Review
 
-Print the review header before spawning agents:
+Print the review header before creating the team:
 
 ```
 ## Code Review: `<SOURCE_BRANCH>` → `<TARGET_BRANCH>`
@@ -277,25 +311,111 @@ Print the review header before spawning agents:
 **Standards:** <comma-separated required policies, or 'defaults only'>
 
 ---
-⏳ Running parallel review (security · logic · quality)...
+⏳ Creating review team (security · logic · quality)...
 ```
 
 Record `T1_START` = current timestamp (seconds).
 
-**Spawn all 3 agents simultaneously** (single parallel tool call):
+### Step 1: Create Review Team
 
-| Agent | Aspects | Model | Context |
-|-------|---------|-------|---------|
-| `code-review-security` | 3, 7, 8 + Tier 1 custom | sonnet | Review Context payload |
-| `code-review-logic` | 2, 6, 1, 11 + Tier 1 custom | sonnet | Review Context payload |
-| `code-review-quality` | 4, 5, 9, 10, 12 + Tier 2 custom | haiku | Review Context payload |
+```
+team_create(teamName="review-<SOURCE_BRANCH_SLUG>", description="Code review: <SOURCE_BRANCH> → <TARGET_BRANCH>")
+```
 
-Wait for all 3 agents to complete. Record `T1_END` = current timestamp (seconds).
+### Step 2: Create Review Tasks
 
-**Print results:** Output each agent's full response **verbatim** (do NOT reconstruct, summarize, or reformat findings — preserve the original finding headings, description, suggestion, and the fenced `markdown` copy block exactly as the agent emitted them):
-1. `code-review-security` output (Tier 1 — security & safety)
-2. `code-review-logic` output (Tier 1 — correctness & coverage)
-3. *(hold `code-review-quality` output — apply gate first)*
+Create 3 tasks — one per reviewer focus area. All tasks are independent (no dependencies):
+
+```
+task_create(
+  teamName="review-<SOURCE_BRANCH_SLUG>",
+  subject="Security & Safety Review (Aspects 3, 7, 8)",
+  description="## Review Focus\nAspects: 3 (Possible Breakage), 7 (Security), 8 (Breaking Changes)\nTier: 1 — Blocker-prone\nCustom aspects (Tier 1): <CUSTOM_ASPECTS_T1 or 'none'>\n\n## Review Context\n<full Review Context payload from Phase 4>\n\n## Output Format\nUse prefix SEC:N for findings. Mark blockers as 🔴, advisories as 🟡.\nOutput full findings verbatim — do NOT summarize.\n\n## Completion\nWhen done, send findings via message_send to lead.",
+  metadata='{"reviewer": "reviewer-sec", "tier": 1, "aspects": "3,7,8"}'
+)
+# → returns taskId "1"
+
+task_create(
+  teamName="review-<SOURCE_BRANCH_SLUG>",
+  subject="Correctness & Coverage Review (Aspects 2, 6, 1, 11)",
+  description="## Review Focus\nAspects: 2 (Correctness), 6 (Tests), 1 (Requirements), 11 (Completeness)\nTier: 1 — Blocker-prone\nCustom aspects (Tier 1): <CUSTOM_ASPECTS_T1 or 'none'>\n\n## Review Context\n<full Review Context payload from Phase 4>\n\n## Output Format\nUse prefix LOG:N for findings. Mark blockers as 🔴, advisories as 🟡.\nOutput full findings verbatim — do NOT summarize.\n\n## Completion\nWhen done, send findings via message_send to lead.",
+  metadata='{"reviewer": "reviewer-log", "tier": 1, "aspects": "2,6,1,11"}'
+)
+# → returns taskId "2"
+
+task_create(
+  teamName="review-<SOURCE_BRANCH_SLUG>",
+  subject="Quality & Architecture Review (Aspects 4, 5, 9, 10, 12)",
+  description="## Review Focus\nAspects: 4 (Better Approach), 5 (Redundancy), 9 (Implications), 10 (Code Quality), 12 (Architecture)\nTier: 2 — Advisory\nCustom aspects (Tier 2): <CUSTOM_ASPECTS_T2 or 'none'>\n\n## Review Context\n<full Review Context payload from Phase 4>\n\n## Output Format\nUse prefix QUA:N for findings. Mark all as 🟡 Advisory (unless ASPECT_ESCALATIONS promote to 🔴).\nOutput full findings verbatim — do NOT summarize.\n\n## Completion\nWhen done, send findings via message_send to lead.",
+  metadata='{"reviewer": "reviewer-qua", "tier": 2, "aspects": "4,5,9,10,12"}'
+)
+# → returns taskId "3"
+```
+
+### Step 3: Spawn Reviewer Workers
+
+Spawn all 3 workers simultaneously via `Task("worker")` (Amp/hdcode) or `Agent("worker")` (Claude):
+
+| Worker | Task | Model | Agent ID |
+|--------|------|-------|----------|
+| `reviewer-sec` | #1 | sonnet | `reviewer-sec` |
+| `reviewer-log` | #2 | sonnet | `reviewer-log` |
+| `reviewer-qua` | #3 | haiku | `reviewer-qua` |
+
+**Worker prompt template** (adapt per reviewer):
+
+```
+You are a code reviewer executing task #{TASK_ID} in team "review-<SOURCE_BRANCH_SLUG>".
+
+## Protocol
+
+### 1. Start
+- task_get(teamName="review-<SLUG>", taskId="{TASK_ID}") — read full task details
+- task_update(teamName="review-<SLUG>", taskId="{TASK_ID}", status="in_progress")
+
+### 2. Review
+- Read the Review Context from task description
+- Apply aspect checklists from reference/review-checklist.md for your assigned aspects
+- For each finding, format with the required Finding Format from the Review Context
+- Periodically: message_fetch(teamName="review-<SLUG>", agent="{AGENT_ID}")
+
+### 3. Complete
+- task_update(teamName="review-<SLUG>", taskId="{TASK_ID}", status="completed",
+    description="<append: N findings (X blockers, Y advisories)>")
+- message_send(teamName="review-<SLUG>", type="message", from="{AGENT_ID}",
+    recipient="lead", content="<full findings output verbatim>")
+
+### 4. Done
+- Return summary of findings
+
+## Important
+- Output findings verbatim — do NOT summarize or abbreviate
+- Use the finding prefix assigned to you (SEC:/LOG:/QUA:)
+- If ASPECT_ESCALATIONS includes your aspects, mark escalated findings as 🔴 Blocker
+- Cross-reference Known Issues: if finding overlaps a KI entry, append [Known Issue: KI-NNN] and downgrade to INFO
+```
+
+### Step 4: Monitor & Collect Results
+
+Poll team status until all 3 tasks complete:
+
+```
+WHILE tasks remain in_progress:
+  task_list(teamName="review-<SLUG>")
+  → check statuses
+  → if all completed, proceed
+  message_fetch(teamName="review-<SLUG>", agent="lead")
+  → collect reviewer findings as they arrive
+```
+
+Record `T1_END` = current timestamp (seconds).
+
+### Step 5: Print Results & Gate
+
+**Print results:** Output each reviewer's findings **verbatim** from their messages (do NOT reconstruct, summarize, or reformat findings — preserve the original finding headings, description, suggestion, and the fenced `markdown` copy block exactly as the agent emitted them):
+1. `reviewer-sec` output (Tier 1 — security & safety)
+2. `reviewer-log` output (Tier 1 — correctness & coverage)
+3. *(hold `reviewer-qua` output — apply gate first)*
 
 **Gate check:** Scan the combined security + logic outputs for any 🔴 marker.
 
@@ -319,7 +439,7 @@ If no blockers (or user says **y**):
 
 Record `T2_START` = current timestamp (seconds).
 
-Print `code-review-quality` output now.
+Print `reviewer-qua` output now.
 
 Record `T2_END` = current timestamp (seconds). Print timing line:
 
@@ -407,6 +527,18 @@ For full OWASP Top 10, PII audit, compliance gate, and tenant isolation — scop
 
 ---
 
+## Phase 7.5: Team Cleanup
+
+After file output, clean up the review team:
+
+```
+team_delete(teamName="review-<SOURCE_BRANCH_SLUG>")
+```
+
+Display: `Review team cleaned up.`
+
+---
+
 ## Phase 8: Interactive Finding Copy
 
 Only enter this phase if `findings[]` is non-empty.
@@ -478,4 +610,29 @@ On **yes**: append a new KI entry to `docs/KNOWN_ISSUES.md` with:
 Display: `KI-NNN added to docs/KNOWN_ISSUES.md — fill in Reason, Accepted by, and Target fix.`
 
 On **no**: skip silently. Only prompt once per matching finding.
+
+---
+
+## Quick Reference
+
+### Agent Team Tools Used
+
+| Phase | Tool | Purpose |
+|-------|------|---------|
+| 4.5 Step 1 | `team_create` | Create review team |
+| 4.5 Step 2 | `task_create` × 3 | Create reviewer tasks (no dependencies) |
+| 4.5 Step 3 | `Task("worker")` × 3 | Spawn reviewer workers |
+| 4.5 Step 4 | `task_list`, `message_fetch` | Monitor progress, collect findings |
+| 7.5 | `team_delete` | Clean up review team |
+
+### Worker → Lead Communication
+
+| Event | Worker Action |
+|-------|---------------|
+| Start review | `task_update(status="in_progress")` |
+| Complete review | `task_update(status="completed")` + `message_send(findings)` |
+
+### Team Naming Convention
+
+Team name: `review-<SOURCE_BRANCH_SLUG>` (e.g., `review-feat-auth-refactor`)
 

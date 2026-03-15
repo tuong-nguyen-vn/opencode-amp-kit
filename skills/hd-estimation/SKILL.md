@@ -1,9 +1,9 @@
 ---
 name: hd-estimation
-description: Create quick ballpark ETA reports for bidding with agent-supported estimates by default, plus optional side-by-side human comparison. Use when estimating effort for new projects - focuses on solution approach and rough hours. Target < 33 minutes per estimate.
+description: Create quick ballpark ETA reports for bidding with agent-supported estimates by default, plus optional side-by-side human comparison. Uses Agent Team Tools in variants mode to parallelize research and ETA generation across multiple approaches. Use when estimating effort for new projects - focuses on solution approach and rough hours. Target < 33 minutes per estimate.
 license: proprietary
 metadata:
-  version: "4.5.2"
+  version: "5.0.0"
   copyright: "© HDWEBSOFT. All rights reserved."
 ---
 
@@ -12,11 +12,48 @@ metadata:
 Quick estimates to win bids. Solution-focused, not code-focused.
 
 ```
-GOAL: Ballpark estimate to WIN BIDS (< 33 min)
+GOAL: Ballpark estimate to WIN BIDS (< 33 min single, < 25 min variants with parallel)
 MODE: Default = client-safe `eta.md` + transparent `eta-agent.md` + comparison `eta-agent-human.md`
 DO: Configure -> Input -> Research -> Solution -> ETA Table
 NOT: Detailed tasks, coding specs, exact hours, pricing
 ```
+
+## Architecture (Variants Mode)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ESTIMATION LEAD                              │
+│                        (This Agent)                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  Phase 0-1:  Config, collect assets, extract context                │
+│  Phase 2.1:  Clarify + research (single agent)                      │
+│  Phase 2.3:  Variant proposal + HITL confirmation                   │
+│  Phase 2.4:  Create team → spawn parallel variant workers           │
+│  Phase 3:    Collect ETAs → generate variants.md comparison         │
+│  Phase 4:    Export (optional)                                      │
+│  Cleanup:    team_delete                                            │
+└─────────────────────────────────────────────────────────────────────┘
+           │  team_create + task_create + Task("worker") × N
+           ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  est-variant1│  │  est-variant2│  │  est-variant3│
+│  Solution +  │  │  Solution +  │  │  Solution +  │
+│  ETA for     │  │  ETA for     │  │  ETA for     │
+│  Variant A   │  │  Variant B   │  │  Variant C   │
+└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
+       │                 │                 │
+       └─────────────────┼─────────────────┘
+                         ▼
+              ┌─────────────────────┐
+              │  Agent Team Tools    │
+              │  • task_update       │
+              │  • message_send      │
+              │  • message_fetch     │
+              └─────────────────────┘
+```
+
+> **Single mode** (`$APPROACH_MODE = single`): No Agent Team needed — runs as before with a single agent.
+> **Variants mode** (`$APPROACH_MODE = variants`): Agent Team parallelizes solution + ETA generation per variant.
 
 ---
 
@@ -29,11 +66,14 @@ Phase 1: Collect & Extract (5-10 min)
     |
 Phase 2: Research & Solution (10-15 min)
     |   includes: approach mode → single or variants
+    |   variants mode: Agent Team creates parallel workers
     |
-Phase 3: ETA Table (5-10 min per approach)
+Phase 3: ETA Table (5-10 min single / 3-5 min variants with parallel)
     |
 Phase 4: Export (optional, 1-2 min)
     |   export to DOCX/PDF for client delivery
+    |
+Cleanup: team_delete (variants mode only)
 ```
 
 ---
@@ -239,11 +279,87 @@ Set `$APPROACH_MODE` only after confirmation:
 
 **If `$APPROACH_MODE = single`:**
 
-Save to `$PLAN_DIR/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions.
+Save to `$PLAN_DIR/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions. No Agent Team needed.
 
 **If `$APPROACH_MODE = variants`:**
 
-Generate only the user-confirmed variants (typically 2-3). For each confirmed variant, save to `$PLAN_DIR/solution-<variant-slug>.md`:
+Use Agent Team to parallelize solution research and generation across variants.
+
+#### Step 1: Create Estimation Team
+
+```
+team_create(teamName="est-<PROJECT_SLUG>", description="Estimation variants for <project name>")
+```
+
+#### Step 2: Create Variant Tasks
+
+Create one task per confirmed variant. All tasks are independent (no dependencies):
+
+```
+task_create(
+  teamName="est-<PROJECT_SLUG>",
+  subject="Solution + ETA: <Variant Display Name>",
+  description="## Variant: <Variant Display Name>\n## Slug: <variant-slug>\n\n## Context\n<full context.md content>\n\n## Shared Assumptions\n<from variant proposal>\n\n## Instructions\n1. Generate solution-<slug>.md with: approach summary, tech stack table, trade-offs, best for / not ideal for, key risks\n2. Generate eta-<slug>.md with: epic breakdown, agent hours, human hours, total with 20% buffer\n3. Generate eta-<slug>-agent-human.md with: side-by-side comparison\n4. Save all files to $PLAN_DIR/\n\n## Output Format\nUse report templates from reference/ directory.\n\n## Completion\nSend file contents via message_send to lead when done.",
+  metadata='{"variant": "<variant-slug>", "display_name": "<Variant Display Name>"}'
+)
+```
+
+Repeat for each confirmed variant (typically 2-3 tasks).
+
+#### Step 3: Spawn Variant Workers
+
+Spawn N workers simultaneously (one per variant):
+
+| Worker | Task | Model |
+|--------|------|-------|
+| `est-<variant-1-slug>` | #1 | sonnet |
+| `est-<variant-2-slug>` | #2 | sonnet |
+| `est-<variant-3-slug>` | #3 | sonnet |
+
+**Worker prompt template:**
+
+```
+You are an estimation worker executing task #{TASK_ID} in team "est-<PROJECT_SLUG>".
+
+## Protocol
+
+### 1. Start
+- task_get(teamName="est-<PROJECT_SLUG>", taskId="{TASK_ID}") — read full task details
+- task_update(teamName="est-<PROJECT_SLUG>", taskId="{TASK_ID}", status="in_progress")
+
+### 2. Research & Generate
+- Research the tech stack and approach for your assigned variant
+- Use librarian, exa tools for library docs and best practices
+- Generate solution-<slug>.md following the solution template
+- Generate eta-<slug>.md following the report template
+- Generate eta-<slug>-agent-human.md following the comparison template
+- Write all files to $PLAN_DIR/
+
+### 3. Complete
+- task_update(teamName="est-<PROJECT_SLUG>", taskId="{TASK_ID}", status="completed",
+    description="<append: total hours, key decisions>")
+- message_send(teamName="est-<PROJECT_SLUG>", type="message", from="est-<slug>",
+    recipient="lead", content="## <Variant Name>\nTotal: <X>h agent / <Y>h human\nKey files: solution-<slug>.md, eta-<slug>.md, eta-<slug>-agent-human.md")
+
+### 4. Done
+- Return summary
+```
+
+#### Step 4: Monitor & Collect
+
+```
+WHILE tasks remain in_progress:
+  task_list(teamName="est-<PROJECT_SLUG>")
+  → check statuses
+  message_fetch(teamName="est-<PROJECT_SLUG>", agent="lead")
+  → collect variant summaries as they arrive
+```
+
+#### Step 5: Generate Comparison (Lead)
+
+After all variant workers complete, the lead generates `$PLAN_DIR/variants.md` using the full schema defined below — aggregating data from all variant solution and ETA files.
+
+Generate only the user-confirmed variants (typically 2-3). Each variant's `solution-<variant-slug>.md` was already created by its worker:
 
 ```markdown
 # Solution: <Variant Display Name>
@@ -531,7 +647,7 @@ Read report templates for output format.
 
 **If `$APPROACH_MODE = single`:**
 
-Generate three reports:
+Generate three reports (lead does this directly — no Agent Team):
 1. `eta.md` — Primary estimate using `reference/report-template.md` (client-safe wording, no explicit agent label)
 2. `eta-agent.md` — Transparent agent-assisted estimate using `reference/report-template-agent.md`
 3. `eta-agent-human.md` — Side-by-side comparison using `reference/report-template-agent-human.md` (Agent | Human Only)
@@ -543,19 +659,19 @@ Save to:
 
 **If `$APPROACH_MODE = variants`:**
 
-For each variant in `variants.md`, generate a file family:
+ETA files were already generated by variant workers in Phase 2.4 (Step 3). The lead now:
 
-| File | Purpose |
-|------|---------|
-| `eta-<slug>.md` | Client-safe estimate for this approach |
-| `eta-<slug>-agent-human.md` | Side-by-side agent vs human comparison |
+1. Reads all worker-generated files:
+   - `eta-<slug>.md` — Client-safe estimate for each approach
+   - `eta-<slug>-agent-human.md` — Side-by-side agent vs human comparison
 
-Example for 3 variants:
-- `eta-custom-build.md`, `eta-custom-build-agent-human.md`
-- `eta-wordpress.md`, `eta-wordpress-agent-human.md`
-- `eta-headless-cms.md`, `eta-headless-cms-agent-human.md`
+2. Generates `variants.md` using the full schema defined in Phase 2.4 (aggregating from all worker outputs — no abbreviated version).
 
-Additionally, generate `variants.md` using the full schema defined in Phase 2.4 (no abbreviated version).
+3. Cleans up the estimation team:
+   ```
+   team_delete(teamName="est-<PROJECT_SLUG>")
+   ```
+   Display: `Estimation team cleaned up.`
 
 **Formula (applies to both single and variant modes):**
 ```
@@ -686,3 +802,36 @@ Read $PLAN_DIR/eta-<slug>-agent-human.md          # Per-variant side-by-side ETA
 2. **Ranges are honest** — "100-140h" better than "120h"
 3. **Solution sells** — show you understand HOW to build it
 4. **20% buffer always** — never bid without buffer
+
+---
+
+## Quick Reference: Agent Team (Variants Mode Only)
+
+### Agent Team Tools Used
+
+| Phase | Tool | Purpose |
+|-------|------|---------|
+| 2.4 Step 1 | `team_create` | Create estimation team |
+| 2.4 Step 2 | `task_create` × N | Create variant tasks (no dependencies) |
+| 2.4 Step 3 | `Task("worker")` × N | Spawn variant workers |
+| 2.4 Step 4 | `task_list`, `message_fetch` | Monitor progress, collect ETAs |
+| 3 | `team_delete` | Clean up estimation team |
+
+### Worker → Lead Communication
+
+| Event | Worker Action |
+|-------|---------------|
+| Start variant | `task_update(status="in_progress")` |
+| Complete variant | `task_update(status="completed")` + `message_send(summary + hours)` |
+
+### Team Naming Convention
+
+Team name: `est-<PROJECT_SLUG>` (e.g., `est-watch-valuation-tool`)
+
+### When to Use Agent Team
+
+| Mode | Agent Team? | Reason |
+|------|-------------|--------|
+| Single approach | No | One agent handles everything |
+| 2-3 variants | Yes | Each variant researched + estimated in parallel |
+| Re-run / revise | No | Reuse existing files, single agent edits |

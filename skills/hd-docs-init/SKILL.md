@@ -1,28 +1,61 @@
 ---
 name: hd-docs-init
-description: Initialize documentation for a new codebase by scanning code structure, analyzing architecture, and generating initial docs following doc-mapping conventions. Use when onboarding a new project, bootstrapping docs for existing codebase, or creating initial AGENTS.md.
+description: Initialize documentation for a new codebase by scanning code structure, analyzing architecture, and generating initial docs following doc-mapping conventions. Uses Agent Team Tools to parallelize analysis and doc generation. Use when onboarding a new project, bootstrapping docs for existing codebase, or creating initial AGENTS.md.
 license: proprietary
 metadata:
+  version: "2.0.0"
   copyright: "© HDWEBSOFT. All rights reserved."
 ---
 
 # Docs Init Pipeline
 
-Bootstrap documentation from codebase analysis. One-time setup for new/undocumented projects.
+Bootstrap documentation from codebase analysis. One-time setup for new/undocumented projects. Uses Agent Team Tools to parallelize the analysis and generation phases.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DOCS INIT LEAD                              │
+│                         (This Agent)                                │
+├─────────────────────────────────────────────────────────────────────┤
+│  Phase 0:   Language preference                                     │
+│  Phase 1:   Scan codebase (lead — lightweight)                      │
+│  Phase 2:   Create team → 4 analysis workers → synthesize           │
+│  Phase 3:   Create doc generation tasks → N doc workers             │
+│  Phase 4:   Collect + review via message_fetch                      │
+│  Phase 5:   Apply docs + team_delete                                │
+└─────────────────────────────────────────────────────────────────────┘
+           │
+           │  Phase 2: team_create + task_create × 4 analysis
+           │  Phase 3: task_create × N doc generators
+           ▼
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│ Analyst A│  │ Analyst B│  │ Analyst C│  │ Analyst D│
+│ Architect│  │ Patterns │  │ API/CLI  │  │ Integra- │
+│ ure      │  │          │  │ Surface  │  │ tions    │
+└────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘
+     └──────────────┼──────────────┼──────────────┘
+                    ▼ (after analysis complete)
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│ DocGen   │  │ DocGen   │  │ DocGen   │  │ DocGen   │  │ DocGen   │
+│ README   │  │ AGENTS   │  │ ARCHIT.  │  │ SECURITY │  │ CODING   │
+└──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
+```
 
 ## Pipeline Overview
 
 ```
-REQUEST → SCAN → ANALYZE → GENERATE → REVIEW → APPLY
+REQUEST → SCAN → TEAM CREATE → ANALYZE (parallel) → SYNTHESIZE → GENERATE (parallel) → REVIEW → APPLY → CLEANUP
 ```
 
-| Phase       | Action                            | Tools (Amp/hdcode / Claude)                                                          |
-| ----------- | --------------------------------- | ----------------------------------------------------------------------------- |
-| 1. Scan     | Discover codebase structure       | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                                 |
-| 2. Analyze  | Understand architecture, patterns | `Task` (4 parallel agents) + `oracle` (Amp/hdcode) / `Plan` (Claude) for synthesis  |
-| 3. Generate | Create doc drafts                 | `Task` (parallel per doc type)                                                |
-| 4. Review   | Validate against code             | `Task` (`finder` (Amp/hdcode) / `Explore` subagent (Claude))                        |
-| 5. Apply    | Write docs with diagrams          | `create_file` / `edit_file` (Amp/hdcode) / `Write` / `Edit` (Claude)               |
+| Phase       | Action                            | Tools                                                                 |
+| ----------- | --------------------------------- | --------------------------------------------------------------------- |
+| 1. Scan     | Discover codebase structure       | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                   |
+| 2. Analyze  | Create team, 4 parallel workers   | `team_create`, `task_create` × 4, `Task("worker")` × 4               |
+| 2.3 Synth.  | Synthesize analysis results       | `message_fetch`, `oracle` / `Plan` subagent                          |
+| 3. Generate | N parallel doc workers            | `task_create` × N, `Task("worker")` × N                              |
+| 4. Review   | Collect + validate docs           | `message_fetch`, `task_list`                                          |
+| 5. Apply    | Write docs, clean up team         | `Write` / `Edit`, `team_delete`                                       |
 
 ## Phase 0: Request
 
@@ -118,115 +151,109 @@ Save to `history/docs-init/scan.md`:
 - Serves Vietnamese users: yes/no (look for: Vietnam, vi-VN, Vietnamese, or infer)
 ```
 
-## Phase 2: Analyze Architecture
+## Phase 2: Analyze Architecture (Agent Team)
 
-### 2.1 Parallel Analysis via Task
-
-Spawn parallel sub-agents:
+### 2.0 Create Docs Init Team
 
 ```
-Task() → Agent A: Architecture analysis (entry points, data flow)
-Task() → Agent B: Pattern discovery (common patterns, conventions)
-Task() → Agent C: API/CLI surface (public interfaces)
-Task() → Agent D: External integrations (DBs, APIs, services)
+team_create(teamName="docs-init-<PROJECT_SLUG>", description="Documentation init for <project name>")
+```
+
+### 2.1 Create Analysis Tasks
+
+Create 4 analysis tasks — all independent (no dependencies):
+
+```
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Architecture Analysis",
+  description="Analyze codebase architecture:\n1. Explore key directories\n2. Find entry points (main, index, app, server)\n3. Identify core classes/functions\n4. Map data flow\n\nReturn JSON: layers, entry_points, core_modules, data_flow\n\nScan report: <scan.md path>",
+  metadata='{"analyst": "arch", "phase": "analysis"}'
+)
+# → returns taskId "1"
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Pattern Discovery",
+  description="Analyze coding patterns:\n1. Find hooks, middleware, decorators, handlers\n2. Identify naming conventions\n3. Document error handling patterns\n4. Identify testing approach\n\nReturn JSON: naming_conventions, patterns, error_handling, testing_approach\n\nScan report: <scan.md path>",
+  metadata='{"analyst": "pattern", "phase": "analysis"}'
+)
+# → returns taskId "2"
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="API/CLI Surface Discovery",
+  description="Discover public interfaces:\n1. Find routes, endpoints, commands, exports\n2. Identify exported symbols\n3. Map API routes or CLI commands\n\nReturn JSON: api_routes, cli_commands, exported_functions\n\nScan report: <scan.md path>",
+  metadata='{"analyst": "api", "phase": "analysis"}'
+)
+# → returns taskId "3"
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="External Integrations Discovery",
+  description="Discover external integrations:\n1. Find database connections\n2. Identify external API clients\n3. Map service dependencies\n4. List infrastructure requirements\n\nReturn JSON: databases, external_apis, services, infra_requirements\n\nScan report: <scan.md path>",
+  metadata='{"analyst": "integration", "phase": "analysis"}'
+)
+# → returns taskId "4"
+```
+
+### 2.1b Spawn Analysis Workers
+
+Spawn all 4 workers simultaneously:
+
+| Worker | Task | Model | Focus |
+|--------|------|-------|-------|
+| `analyst-arch` | #1 | haiku | Architecture, entry points, data flow |
+| `analyst-pattern` | #2 | haiku | Patterns, naming, error handling |
+| `analyst-api` | #3 | haiku | API/CLI surface, exports |
+| `analyst-integration` | #4 | haiku | Databases, APIs, services |
+
+**Worker prompt template:**
+
+```
+You are an analysis worker executing task #{TASK_ID} in team "docs-init-<PROJECT_SLUG>".
+
+## Protocol
+
+### 1. Start
+- task_get(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}") — read full task details
+- task_update(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}", status="in_progress")
+
+### 2. Analyze
+- Read the scan report
+- Use finder/Explore to explore the codebase
+- Gather data for your assigned analysis focus
+- Be thorough but concise
+
+### 3. Complete
+- task_update(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}", status="completed",
+    description="<append analysis summary>")
+- message_send(teamName="docs-init-<PROJECT_SLUG>", type="message", from="{AGENT_ID}",
+    recipient="lead", content="<structured analysis output as JSON>")
+
+### 4. Done
+- Return analysis results
+```
+
+### 2.1c Monitor Analysis
+
+```
+WHILE analysis tasks remain in_progress:
+  task_list(teamName="docs-init-<PROJECT_SLUG>")
+  → check statuses
+  message_fetch(teamName="docs-init-<PROJECT_SLUG>", agent="lead")
+  → collect analysis results as they arrive
 ```
 
 ### 2.2 Analysis Prompts
 
-**Architecture Agent:**
-```
-Understand the scan report and explore the codebase:
-1. finder (Amp/hdcode) / Explore subagent (Claude) to understand key directories structure
-2. finder (Amp/hdcode) / Explore subagent (Claude) "entry point OR main OR app OR server"
-3. finder (Amp/hdcode) / Explore subagent (Claude) for core classes/functions
-
-Return:
-{
-  "layers": ["presentation", "business", "data"],
-  "entry_points": [{"file": "...", "purpose": "..."}],
-  "core_modules": [{"name": "...", "responsibility": "..."}],
-  "data_flow": "description of how data moves"
-}
-```
-
-**Pattern Agent:**
-```
-Analyze coding patterns in the codebase:
-1. finder (Amp/hdcode) / Explore subagent (Claude) "hook OR middleware OR decorator OR handler"
-2. Look for consistent naming conventions
-3. Identify error handling patterns
-
-Return:
-{
-  "naming_conventions": {"files": "...", "functions": "...", "classes": "..."},
-  "patterns": [{"name": "...", "usage": "...", "example_file": "..."}],
-  "error_handling": "description",
-  "testing_approach": "description"
-}
-```
-
-**API/CLI Agent:**
-```
-Discover public interfaces:
-1. finder (Amp/hdcode) / Explore subagent (Claude) "route OR endpoint OR command OR export"
-2. finder (Amp/hdcode) / Explore subagent (Claude) for exported symbols
-3. Understand API route files or CLI command files
-
-Return:
-{
-  "api_routes": [{"method": "...", "path": "...", "handler": "..."}],
-  "cli_commands": [{"name": "...", "description": "..."}],
-  "exported_functions": [{"name": "...", "module": "..."}]
-}
-```
+> Analysis prompts are embedded in the task descriptions above (Step 2.1). Each worker receives its full prompt via `task_get`. See the task descriptions for exact analysis instructions per domain.
 
 ### 2.3 Synthesis
 
-**Amp** — use `oracle`:
-```
-oracle(
-  task: "Synthesize analysis into architecture overview",
-  context: """
-    Scan report: <scan.md>
-    Architecture: <agent A output>
-    Patterns: <agent B output>
-    Interfaces: <agent C output>
-    Integrations: <agent D output>
-    
-    Output:
-    1. High-level architecture description
-    2. Component relationships
-    3. Key patterns and conventions
-    4. Recommended doc structure
-  """,
-  files: ["history/docs-init/scan.md"]
-)
-```
+After all 4 analysis workers complete, the lead synthesizes results using `oracle` / `Plan` subagent:
 
-**Claude** — use `Plan` subagent:
-```
-Plan(
-  task: "Synthesize analysis into architecture overview",
-  context: """
-    Scan report: <scan.md>
-    Architecture: <agent A output>
-    Patterns: <agent B output>
-    Interfaces: <agent C output>
-    Integrations: <agent D output>
-    
-    Output:
-    1. High-level architecture description
-    2. Component relationships
-    3. Key patterns and conventions
-    4. Recommended doc structure
-  """,
-  files: ["history/docs-init/scan.md"]
-)
-```
-
-Save to `history/docs-init/analysis.md`.
-
-## Phase 3: Generate Docs
+## Phase 3: Generate Docs (Agent Team — Parallel)
 
 Based on analysis, determine which docs to create using doc-mapping conventions.
 
@@ -248,20 +275,98 @@ Based on analysis, determine which docs to create using doc-mapping conventions.
 
 > **AGENTS.md vs CLAUDE.md**: `AGENTS.md` is the full development guidelines file read by Amp agents. `CLAUDE.md` is a short Claude Code configuration file that points Claude agents to `AGENTS.md`. Always generate both — they serve different agent runtimes but the same guidelines.
 
-### 3.2 Parallel Doc Generation
+### 3.2 Create Doc Generation Tasks
 
-Spawn Task per doc type:
+Create one task per doc type. Doc generation tasks are blocked by all analysis tasks (must wait for synthesis):
 
 ```
-Task() → README.md generator
-Task() → AGENTS.md generator
-Task() → CLAUDE.md generator (always, alongside AGENTS.md)
-Task() → docs/ARCHITECTURE.md generator
-Task() → Package-specific AGENTS.md generators
-Task() → docs/SECURITY_STANDARDS.md generator (if any security signals detected in scan)
-Task() → docs/CODING_STANDARDS.md generator (always)
-Task() → docs/REVIEW_STANDARDS.md generator (always)
-Task() → docs/KNOWN_ISSUES.md generator (always)
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Generate README.md",
+  description="Generate README.md from synthesis results.\n\nTemplate: <README template>\nAnalysis: <synthesis output>\nScan: <scan.md>",
+  addBlockedBy="1,2,3,4",
+  metadata='{"doc": "README.md", "phase": "generation"}'
+)
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Generate AGENTS.md",
+  description="Generate AGENTS.md from synthesis results.\n\nTemplate: <AGENTS.md template>\nAnalysis: <synthesis output>\nScan: <scan.md>\nDOCS_LANGUAGE: <language>",
+  addBlockedBy="1,2,3,4",
+  metadata='{"doc": "AGENTS.md", "phase": "generation"}'
+)
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Generate CLAUDE.md",
+  description="Generate CLAUDE.md pointer file.\n\nTemplate: <CLAUDE.md template>",
+  addBlockedBy="1,2,3,4",
+  metadata='{"doc": "CLAUDE.md", "phase": "generation"}'
+)
+
+task_create(
+  teamName="docs-init-<PROJECT_SLUG>",
+  subject="Generate docs/ARCHITECTURE.md",
+  description="Generate docs/ARCHITECTURE.md from synthesis results.\n\nTemplate: <ARCHITECTURE template>\nAnalysis: <synthesis output>",
+  addBlockedBy="1,2,3,4",
+  metadata='{"doc": "docs/ARCHITECTURE.md", "phase": "generation"}'
+)
+
+# Additional tasks for SECURITY_STANDARDS, CODING_STANDARDS, REVIEW_STANDARDS, KNOWN_ISSUES...
+# Create one task per doc, all addBlockedBy="1,2,3,4"
+```
+
+### 3.2b Spawn Doc Generator Workers
+
+After analysis tasks complete (auto-unblocked by task system), spawn doc generators:
+
+| Worker | Doc | Model |
+|--------|-----|-------|
+| `docgen-readme` | README.md | haiku |
+| `docgen-agents` | AGENTS.md | sonnet |
+| `docgen-claude` | CLAUDE.md | haiku |
+| `docgen-arch` | docs/ARCHITECTURE.md | haiku |
+| `docgen-security` | docs/SECURITY_STANDARDS.md | haiku |
+| `docgen-coding` | docs/CODING_STANDARDS.md | haiku |
+| `docgen-review` | docs/REVIEW_STANDARDS.md | haiku |
+| `docgen-ki` | docs/KNOWN_ISSUES.md | haiku |
+
+> Use sonnet for AGENTS.md (most complex doc); haiku for all others.
+
+**Worker prompt template:**
+
+```
+You are a doc generator executing task #{TASK_ID} in team "docs-init-<PROJECT_SLUG>".
+
+## Protocol
+
+### 1. Start
+- task_get(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}")
+- task_update(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}", status="in_progress")
+
+### 2. Generate
+- Read the synthesis analysis from task description
+- Generate the doc following the template provided
+- Ensure accuracy against codebase (use finder/Explore to verify claims)
+
+### 3. Complete
+- task_update(teamName="docs-init-<PROJECT_SLUG>", taskId="{TASK_ID}", status="completed",
+    description="<doc file generated successfully>")
+- message_send(teamName="docs-init-<PROJECT_SLUG>", type="message", from="{AGENT_ID}",
+    recipient="lead", content="<full generated doc content>")
+
+### 4. Done
+- Return doc content
+```
+
+### 3.2c Monitor Doc Generation
+
+```
+WHILE doc generation tasks remain in_progress:
+  task_list(teamName="docs-init-<PROJECT_SLUG>")
+  → check statuses
+  message_fetch(teamName="docs-init-<PROJECT_SLUG>", agent="lead")
+  → collect generated docs as they arrive
 ```
 
 ### 3.3 Doc Templates
@@ -468,25 +573,19 @@ Always generate `docs/REVIEW_STANDARDS.md` on every hd-docs-init run (no signal 
 
 ## Phase 4: Review
 
-### 4.1 Validation via finder (Amp/hdcode) / Explore Subagent (Claude)
+### 4.1 Validation
+
+After all doc generation tasks complete, the lead validates generated docs against the codebase:
 
 ```
-Task(
-  subagent_type: "finder (Amp/hdcode) / Explore (Claude)",
-  prompt: """
-    Review these generated docs against the actual codebase:
-    <list of generated doc files>
-
-    Validate:
-    1. Accuracy - Does each doc match code reality?
-    2. Completeness - Any missing critical info?
-    3. Consistency - Terms match across docs?
-    4. Clarity - Would a new developer understand?
-
-    For each doc, output: PASS or list of specific changes needed.
-  """
-)
+finder (Amp/hdcode) / Explore subagent (Claude): Verify generated docs match code reality
 ```
+
+For each generated doc, check:
+1. **Accuracy** — Does each doc match code reality?
+2. **Completeness** — Any missing critical info?
+3. **Consistency** — Terms match across docs?
+4. **Clarity** — Would a new developer understand?
 
 ### 4.2 Review Checklist
 
@@ -521,6 +620,16 @@ for package in packages/*; do
   # Create packages/<name>/AGENTS.md with package-specific info
 done
 ```
+
+### 5.4 Team Cleanup
+
+After all docs are written:
+
+```
+team_delete(teamName="docs-init-<PROJECT_SLUG>")
+```
+
+Display: `Docs init team cleaned up.`
 
 ## Concrete Example
 
@@ -560,14 +669,35 @@ User: "Initialize docs for this new project"
 
 ## Tool Quick Reference
 
-| Goal                  | Tool (Amp/hdcode / Claude)                                               |
-| --------------------- | ----------------------------------------------------------------- |
-| Find code/structure   | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                     |
-| Parallel analysis     | `Task` (spawn multiple)                                           |
-| Synthesis             | `oracle` (Amp/hdcode) / `Plan` (Claude)                                 |
-| Validate docs         | `Task` (`finder` (Amp/hdcode) / `Explore` subagent (Claude))            |
-| Create docs           | `create_file` (Amp/hdcode) / `Write` (Claude)                           |
-| Update docs           | `edit_file` (Amp/hdcode) / `Edit` (Claude)                              |
+| Goal                  | Tool                                                          |
+| --------------------- | ------------------------------------------------------------- |
+| Find code/structure   | `finder` (Amp/hdcode) / `Explore` subagent (Claude)          |
+| Create analysis team  | `team_create`                                                 |
+| Create analysis/doc tasks | `task_create` (with `addBlockedBy` for doc tasks)         |
+| Spawn workers         | `Task("worker")` (Amp/hdcode) / `Agent("worker")` (Claude)   |
+| Monitor progress      | `task_list`, `message_fetch`                                  |
+| Synthesis             | `oracle` (Amp/hdcode) / `Plan` (Claude)                      |
+| Validate docs         | `finder` (Amp/hdcode) / `Explore` subagent (Claude)          |
+| Create docs           | `create_file` (Amp/hdcode) / `Write` (Claude)                |
+| Update docs           | `edit_file` (Amp/hdcode) / `Edit` (Claude)                   |
+| Clean up team         | `team_delete`                                                 |
+
+### Agent Team Tools Used
+
+| Phase | Tool | Purpose |
+|-------|------|---------|
+| 2.0 | `team_create` | Create docs-init team |
+| 2.1 | `task_create` × 4 | Analysis tasks (no dependencies) |
+| 2.1b | `Task("worker")` × 4 | Spawn analysis workers |
+| 2.1c | `task_list`, `message_fetch` | Monitor analysis |
+| 3.2 | `task_create` × N | Doc generation tasks (blocked by analysis) |
+| 3.2b | `Task("worker")` × N | Spawn doc generator workers |
+| 3.2c | `task_list`, `message_fetch` | Monitor doc generation |
+| 5.4 | `team_delete` | Clean up team |
+
+### Team Naming Convention
+
+Team name: `docs-init-<PROJECT_SLUG>` (e.g., `docs-init-billing-api`)
 
 ## Quality Checklist
 
