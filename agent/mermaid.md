@@ -1,7 +1,7 @@
 ---
 description: Renders Mermaid diagrams for visualizing architecture, workflows, data flows, and code relationships. Use proactively when diagrams convey information better than prose.
 mode: subagent
-model: github-copilot/claude-haiku-4-5
+model: github-copilot/claude-haiku-4.5
 temperature: 0.3
 color: "#06B6D4"
 tools:

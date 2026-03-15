@@ -1,6 +1,6 @@
 ---
 description: Expert AI advisor with advanced reasoning for code reviews, architecture, planning, and deep technical guidance. Invoked as subagent when main agent needs smarter model.
-mode: subagent
+mode: all
 model: github-copilot/gpt-5.4
 color: "#8B5CF6"
 tools:

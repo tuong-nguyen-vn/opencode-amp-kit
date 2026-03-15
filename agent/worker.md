@@ -1,7 +1,7 @@
 ---
 description: Autonomous bead execution worker. Spawned by hd-orchestrator to execute beads within an assigned track. Do NOT invoke directly — only used by the orchestrator.
 mode: subagent
-model: github-copilot/claude-sonnet-4-6
+model: github-copilot/claude-sonnet-4.6
 color: "#F97316"
 tools:
   "*": true
