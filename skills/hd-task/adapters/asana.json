@@ -1,0 +1,29 @@
+{
+  "platform": "asana",
+  "display_name": "Asana",
+  "status": "implemented",
+  "url_pattern": "https://app\\.asana\\.com/0/(\\d+)/(\\d+)",
+  "id_group": 2,
+  "mcp_server": "@roychri/mcp-server-asana",
+  "mcp_server_name": "asana",
+  "tools": {
+    "get_task":     "asana_get_task",
+    "update_task":  "asana_update_task",
+    "add_comment":  "asana_create_task_story",
+    "list_teams":   "asana_list_workspaces",
+    "get_blockers": "asana_get_task",
+    "list_states":  "asana_get_project_sections",
+    "link_pr":      "asana_create_task_story",
+    "search":       "asana_search_tasks"
+  },
+  "fallback_script": null,
+  "workspace_url_pattern": "app\\.asana\\.com/0/(\\d+)(?:/list)?",
+  "list_issues": "asana_search_tasks",
+  "list_cycles": null,
+  "auth": {
+    "type": "env",
+    "key": "ASANA_ACCESS_TOKEN",
+    "format": "Bearer <personal-access-token>",
+    "get_credentials_url": "https://app.asana.com/0/my-apps"
+  }
+}

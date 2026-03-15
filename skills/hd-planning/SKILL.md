@@ -18,15 +18,15 @@ Generate quality plans through systematic discovery, synthesis, verification, an
 USER REQUEST → Discovery → Clarification → Synthesis → Verification → Decomposition → Validation → Track Planning → Ready Plan
 ```
 
-| Phase              | Tool (Amp / Claude)                                          | Output                              |
-| ------------------ | ------------------------------------------------------------ | ----------------------------------- |
-| 1. Discovery       | `finder` (Amp) / `Explore` subagent (Claude), `librarian`, exa | Discovery Report                    |
-| 2. Clarification   | Interactive Q&A with user                                    | Validated Requirements              |
-| 3. Synthesis       | `oracle` (Amp) / `Plan` subagent (Claude)                    | Approach + Risk Map                 |
-| 4. Verification    | Spikes via MULTI_AGENT_WORKFLOW                              | Validated Approach + Learnings      |
-| 5. Decomposition   | hd-plan-to-beads skill                                       | .beads/\*.md files                  |
-| 6. Validation      | bv + `oracle` (Amp) / `Plan` subagent (Claude)               | Validated dependency graph          |
-| 7. Track Planning  | bv --robot-plan                                              | Execution plan with parallel tracks |
+| Phase              | Tool                                                 | Output                              |
+| ------------------ | ---------------------------------------------------- | ----------------------------------- |
+| 1. Discovery       | `finder`, `librarian`, exa                           | Discovery Report                    |
+| 2. Clarification   | Interactive Q&A with user                            | Validated Requirements              |
+| 3. Synthesis       | `oracle`                                             | Approach + Risk Map                 |
+| 4. Verification    | Spikes via `Task`                                    | Validated Approach + Learnings      |
+| 5. Decomposition   | hd-plan-to-beads skill                               | .beads/\*.md files                  |
+| 6. Validation      | bv + `oracle`                                        | Validated dependency graph          |
+| 7. Track Planning  | bv --robot-plan                                      | Execution plan with parallel tracks |
 
 ## Phase 1: Discovery (Parallel Exploration)
 
@@ -36,12 +36,9 @@ Launch parallel sub-agents to gather codebase intelligence:
 Task() → Agent A: Architecture snapshot
 Task() → Agent B: Pattern search (find similar existing code)
 Task() → Agent C: Constraints (package.json, tsconfig, deps)
-finder → "Find all authentication middleware implementations"           # Amp
-finder → "Where is the database connection configured?"                # Amp
-finder → "Find how API routes are organized"                           # Amp
-Explore subagent → "Find all authentication middleware implementations" # Claude
-Explore subagent → "Where is the database connection configured?"      # Claude
-Explore subagent → "Find how API routes are organized"                 # Claude
+finder → "Find all authentication middleware implementations"
+finder → "Where is the database connection configured?"
+finder → "Find how API routes are organized"
 librarian → External patterns ("how do similar projects do this?")
 exa → Library docs (if external integration needed)
 ```
@@ -168,25 +165,17 @@ After receiving answers, add section to `history/<feature>/discovery.md`:
 
 ## Phase 3: Synthesis (Plan)
 
-Feed Discovery Report to `oracle` (Amp) / `Plan` subagent (Claude) for gap analysis:
+Feed Discovery Report to `oracle` for gap analysis:
 
 ```
-# Amp
 oracle(
   task: "Analyze gap between current codebase and feature requirements",
   context: "Discovery report attached. User wants: <feature>",
   files: ["history/<feature>/discovery.md"]
 )
-
-# Claude
-Plan(
-  task: "Analyze gap between current codebase and feature requirements",
-  context: "Discovery report attached. User wants: <feature>",
-  files: ["history/<feature>/discovery.md"]
-)
 ```
 
-`oracle` (Amp) / `Plan` subagent (Claude) produces:
+`oracle` produces:
 
 1. **Gap Analysis** - What exists vs what's needed
 2. **Approach Options** - 1-3 strategies with tradeoffs
@@ -245,7 +234,7 @@ Save to `history/<feature>/approach.md`:
 
 ### For HIGH Risk Items → Create Spike Beads
 
-Spikes are mini-plans executed via MULTI_AGENT_WORKFLOW:
+Spikes are mini-plans executed via `Task`:
 
 ```bash
 br create "Spike: <question to answer>" -t epic -p 0
@@ -278,7 +267,7 @@ Close with: `br close <id> --reason "YES: <approach>" or "NO: <blocker>"`
 
 ### Execute Spikes
 
-Use the MULTI_AGENT_WORKFLOW:
+Use the `Task` tool:
 
 1. `bv --robot-plan` to parallelize spikes
 2. `Task()` per spike with time-box
@@ -288,15 +277,7 @@ Use the MULTI_AGENT_WORKFLOW:
 ### Aggregate Spike Results
 
 ```
-# Amp
 oracle(
-  task: "Synthesize spike results and update approach",
-  context: "Spikes completed. Results: ...",
-  files: ["history/<feature>/approach.md"]
-)
-
-# Claude
-Plan(
   task: "Synthesize spike results and update approach",
   context: "Spikes completed. Results: ...",
   files: ["history/<feature>/approach.md"]
@@ -406,15 +387,7 @@ br update <id> --priority X # Adjust priorities
 ### Plan Final Review
 
 ```
-# Amp
 oracle(
-  task: "Review plan completeness and clarity",
-  context: "Plan ready. Check for gaps, unclear beads, missing deps.",
-  files: [".beads/"]
-)
-
-# Claude
-Plan(
   task: "Review plan completeness and clarity",
   context: "Plan ready. Check for gaps, unclear beads, missing deps.",
   files: [".beads/"]
@@ -562,14 +535,14 @@ Skip this step if no task URL is in context, or if the task was already updated.
 
 ### Tool Selection
 
-| Need                                    | Tool (Amp / Claude)                              |
-| --------------------------------------- | ------------------------------------------------ |
-| Codebase structure, definitions, search | `finder` (Amp) / `Explore` subagent (Claude)     |
-| External patterns                       | `librarian`                                          |
-| Web research                            | `mcp__exa__web_search_exa`                       |
-| Gap analysis                            | `oracle` (Amp) / `Plan` subagent (Claude)        |
-| Create beads                            | `skill("hd-plan-to-beads")` + `br create`       |
-| Validate graph                          | `bv --robot-*`                                   |
+| Need                                    | Tool                                     |
+| --------------------------------------- | ---------------------------------------- |
+| Codebase structure, definitions, search | `finder`                                 |
+| External patterns                       | `librarian`                              |
+| Web research                            | `mcp__exa__web_search_exa`               |
+| Gap analysis                            | `oracle`                                 |
+| Create beads                            | `skill("hd-plan-to-beads")` + `br create` |
+| Validate graph                          | `bv --robot-*`                           |
 
 ### Common Mistakes
 

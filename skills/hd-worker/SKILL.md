@@ -69,7 +69,7 @@ NEXT:   loop to next bead
 | Parameter          | Required | Value                     |
 | ------------------ | -------- | ------------------------- |
 | `project_key`      | Yes      | `<absolute-project-path>` |
-| `program`          | Yes      | `amp`                     |
+| `program`          | Yes      | `opencode`                |
 | `model`            | Yes      | `<your-model>`            |
 | `task_description` | Yes      | `Track N: <description>`  |
 | `name`             | No       | Auto-generated if omitted |
@@ -147,23 +147,19 @@ br show <bead-id>
 
 #### 2.1 Explore Codebase
 
-**Tool**: `finder` (Amp) / `Explore` subagent (Claude)
+**Tool**: `finder`
 
-| Parameter | Runtime | Value                                                                 |
-| --------- | ------- | --------------------------------------------------------------------- |
-| `query`   | Both    | Natural language query describing what to find (e.g., "JWT auth flow") |
-
-Use `finder` (Amp) or `Explore` subagent (Claude) for semantic/conceptual searches. Use `Grep` for exact text matches.
+Use `finder` for semantic/conceptual searches. Use `Grep` for exact text matches.
 
 #### 2.2 Make Changes
 
-**Tool**: `edit_file` (Amp) / `Edit` (Claude)
+**Tool**: `Edit`
 
-| Parameter (Amp)  | Parameter (Claude) | Value                                      |
-| ---------------- | ------------------ | ------------------------------------------ |
-| `path`           | `file_path`        | Absolute path to file                      |
-| `old_str`        | `old_string`       | Exact text to replace (must match exactly) |
-| `new_str`        | `new_string`       | New text to replace with                   |
+| Parameter   | Value                                      |
+| ----------- | ------------------------------------------ |
+| `filePath`  | Absolute path to file                      |
+| `oldString` | Exact text to replace (must match exactly) |
+| `newString` | New text to replace with                   |
 
 After edits: run the type-check command from `AGENTS.md ## Worker Config → Build Commands`.
 
@@ -172,8 +168,7 @@ After edits: run the type-check command from `AGENTS.md ## Worker Config → Bui
 Check `AGENTS.md ## Worker Config → UI Stack` for:
 - Which component library to use
 - Which skill to load before UI work (if any)
-- **Amp**: Use shadcn MCP tools (`mcp__shadcn__*`) for component search/install if available
-- **Claude**: Use MCP tools configured in project `.claude/mcp.json` (project-specific)
+- Use MCP tools configured in the project (e.g., `mcp__shadcn__*` for shadcn/ui if available)
 
 If no `### UI Stack` section is defined in AGENTS.md, no UI-specific tooling is needed for this project — implement using standard tools.
 
@@ -199,6 +194,8 @@ Run commands from AGENTS.md ## Worker Config → Build Commands:
 
 **Amp**: Also run `get_diagnostics` on changed files/directories to catch errors and warnings.
 
+*(If `get_diagnostics` is unavailable, rely on build commands from AGENTS.md)*
+
 #### 3.2 Close Bead
 
 ```bash
@@ -211,9 +208,7 @@ After successfully closing the bead:
 
 💡 **Reminder**: Don't forget to update the changelog!
 
-Run: `/hd-changelog <bead-id> --task-url <your-task-url>` (Claude) / `/ampkit:changelog <bead-id> --task-url <your-task-url>` (Amp)
-
-Or defer until epic completion: `/hd-changelog <epic-id>` (Claude) / `/ampkit:changelog <epic-id>` (Amp)
+Add an entry to CHANGELOG.md summarizing the work done for this bead. This can also be deferred until epic completion.
 
 *(This is a reminder only, not required for bead completion)*
 
@@ -271,7 +266,7 @@ Track N (<AgentName>) Complete:
 ```
 SETUP: register_agent → macro_contact_handshake (with orchestrator)
 START: summarize_thread → fetch_inbox → file_reservation_paths → br update
-WORK:  finder / Explore → edit_file / Edit → get_diagnostics (Amp) → check inbox
+WORK:  finder → Edit → get_diagnostics / build commands → check inbox
 DONE:  verify → br close → send_message (orchestrator) → send_message (self) → release
 NEXT:  loop to START
 ```
@@ -287,13 +282,12 @@ NEXT:  loop to START
 
 ### Tool Reference
 
-| Task                 | Amp Tool                     | Claude Tool                                                           |
-| -------------------- | ---------------------------- | --------------------------------------------------------------------- |
-| Find code            | `finder`                     | `Explore` subagent                                                    |
-| Edit files           | `edit_file`                  | `Edit`                                                                |
-| Check diagnostics    | `get_diagnostics`            | *(use build commands)*                                                |
-| UI component tools   | `mcp__shadcn__*` (if avail.) | MCP tools from project `.claude/mcp.json` (project-specific)         |
-| Changelog            | `/ampkit:changelog`          | `/hd-changelog`                                                      |
+| Task                 | Tool                                      |
+| -------------------- | ----------------------------------------- |
+| Find code            | `finder`                                  |
+| Edit files           | `Edit`                                    |
+| Check diagnostics    | `get_diagnostics` or build commands       |
+| UI component tools   | MCP tools from project config (if avail.) |
 
 ---
 

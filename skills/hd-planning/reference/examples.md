@@ -178,7 +178,7 @@ br create "Spike: Checkout session creation flow" -t task --blocks bd-50
 # → bd-53
 ```
 
-**Execute via MULTI_AGENT_WORKFLOW:**
+**Execute via Task tool (parallel workers):**
 
 ```bash
 bv --robot-plan  # Assigns spikes to parallel tracks

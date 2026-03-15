@@ -92,7 +92,7 @@ am ensure_project '{"human_key": "<absolute-project-path>"}'
 | Parameter          | Required | Value                                 |
 | ------------------ | -------- | ------------------------------------- |
 | `project_key`      | Yes      | `<absolute-project-path>`             |
-| `program`          | Yes      | `amp` or `claude` (match current runtime) |
+| `program`          | Yes      | `opencode`                                |
 | `model`            | Yes      | `<model>`                             |
 | `task_description` | Yes      | `Orchestrator for <epic-id>`          |
 | `name`             | No       | Auto-generated (e.g. `GoldFox`)       |
@@ -133,7 +133,7 @@ For each track, invoke:
 
 **Important:**
 - Always pass the full prompt to the Task tool (do not just reference the template)
-- The prompt MUST include instruction to load the worker: `Subagent("worker")` (Claude) / `Skill("worker")` (Amp)
+- The prompt MUST include instruction to load the worker skill: `skill("hd-worker")`
 
 ### Example Task prompt for Track 1
 
@@ -157,7 +157,7 @@ File scope: packages/sdk/**
 4. Run: br update <bead-id> --status in_progress
 
 ### Work on Bead
-- Use preferred tools from AGENTS.md (`finder` in Amp / `Explore` subagent in Claude for exploration)
+- Use preferred tools from AGENTS.md (`finder` for exploration)
 - Check inbox periodically with am fetch_inbox
 
 ### Complete Bead
@@ -306,15 +306,12 @@ After all tracks complete:
 📊 **Epic Summary**: N beads completed across M tracks
 
 Would you like to generate changelog entries for this epic?
-  [y] Yes, run `/hd-changelog <epic-id>`
-  [n] No, I'll do it manually later
 
-If [y]:
-  - The changelog skill will process all completed beads
-  - You'll review and confirm each entry (or bulk confirm)
-  - All entries will be added to CHANGELOG.md
+If yes:
+  - Review all completed beads and summarize changes
+  - Add entries to CHANGELOG.md
 
-*(This is optional and non-blocking)*
+*(This is optional and non-blocking — ask the user in response text, wait for reply)*
 
 ---
 
