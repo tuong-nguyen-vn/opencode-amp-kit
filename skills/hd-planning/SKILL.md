@@ -1,6 +1,6 @@
 ---
 name: hd-planning
-description: Generate comprehensive plans for new features by exploring the codebase, synthesizing approaches, validating with spikes, and decomposing into beads. Use when asked to plan a feature, create a roadmap, or design an implementation approach.
+description: Generate comprehensive plans for new features by exploring the codebase, synthesizing approaches, validating with spikes, and decomposing into tasks. Use when asked to plan a feature, create a roadmap, or design an implementation approach.
 license: proprietary
 metadata:
   copyright: "© HDWEBSOFT. All rights reserved."
@@ -9,24 +9,28 @@ metadata:
 # Feature Planning Pipeline
 
 > **[IMPORTANT]** This skill is for PLANNING ONLY. Do NOT implement any code during this phase. All implementation will be handled by worker agents in the execution phase after the plan is approved.
+>
+> **User Confirmation Gates:**
+> - **Gate 1 (after Phase 3)** — User approves approach direction before decomposition. If rejected, revise approach or scope.
+> - **Gate 2 (Phase 4)** — User confirms spike execution. Only shown when HIGH risk items exist. If skipped, mark risks as accepted.
+> - **Gate 3 (after Phase 6)** — User approves final task graph before handoff to orchestrator. Plan does NOT auto-handoff without explicit approval.
 
 Generate quality plans through systematic discovery, synthesis, verification, and decomposition.
 
 ## Pipeline Overview
 
 ```
-USER REQUEST → Discovery → Clarification → Synthesis → Verification → Decomposition → Validation → Track Planning → Ready Plan
+USER REQUEST → Discovery → Clarification → Synthesis → [Gate 1: Approve Direction] → Verification → Decomposition → Validation → [Gate 3: Approve Plan] → Ready
 ```
 
-| Phase              | Tool                                                 | Output                              |
-| ------------------ | ---------------------------------------------------- | ----------------------------------- |
-| 1. Discovery       | `finder`, `librarian`, exa                           | Discovery Report                    |
-| 2. Clarification   | Interactive Q&A with user                            | Validated Requirements              |
-| 3. Synthesis       | `oracle`                                             | Approach + Risk Map                 |
-| 4. Verification    | Spikes via `Task`                                    | Validated Approach + Learnings      |
-| 5. Decomposition   | hd-plan-to-beads skill                               | .beads/\*.md files                  |
-| 6. Validation      | bv + `oracle`                                        | Validated dependency graph          |
-| 7. Track Planning  | bv --robot-plan                                      | Execution plan with parallel tracks |
+| Phase              | Tool                                                                     | Output                              |
+| ------------------ | ------------------------------------------------------------------------ | ----------------------------------- |
+| 1. Discovery       | `finder` (Amp/hdcode) / `Explore` subagent (Claude), `librarian`, `exa`         | Discovery Report                    |
+| 2. Clarification   | Interactive Q&A with user                                                | Validated Requirements              |
+| 3. Synthesis       | `oracle` (Amp/hdcode) / `Plan` subagent (Claude)                           | Approach + Risk Map                 |
+| 4. Verification    | `team_create` → `task_create` → `Task()` workers → `team_delete`        | Validated Approach + Learnings      |
+| 5. Decomposition   | `team_create` → `task_create` with dependencies                         | Feature team with task graph        |
+| 6. Validation      | `task_list` + agent reasoning                                            | Validated dependency graph          |
 
 ## Phase 1: Discovery (Parallel Exploration)
 
@@ -36,9 +40,18 @@ Launch parallel sub-agents to gather codebase intelligence:
 Task() → Agent A: Architecture snapshot
 Task() → Agent B: Pattern search (find similar existing code)
 Task() → Agent C: Constraints (package.json, tsconfig, deps)
+
+# Amp / hdcode
 finder → "Find all authentication middleware implementations"
 finder → "Where is the database connection configured?"
 finder → "Find how API routes are organized"
+
+# Claude
+Explore subagent → "Find all authentication middleware implementations"
+Explore subagent → "Where is the database connection configured?"
+Explore subagent → "Find how API routes are organized"
+
+# All runtimes
 librarian → External patterns ("how do similar projects do this?")
 exa → Library docs (if external integration needed)
 ```
@@ -82,7 +95,7 @@ Save to `history/YYYYMMDD-<feature>/discovery.md`:
 ## UI Work Detected
 
 - UI patterns identified: [list view / form / dashboard / modal / other / none]
-  (Look for: page components, form files, table/list components, bead descriptions mentioning "page", "form", "view", "layout", "UI", "component", "screen", "modal", "dialog", "dashboard")
+  (Look for: page components, form files, table/list components, task descriptions mentioning "page", "form", "view", "layout", "UI", "component", "screen", "modal", "dialog", "dashboard")
 - Existing `docs/ui-standards/` directory: [yes — files: <list> / no]
 - `## Worker Config` in project AGENTS.md: [yes / no]
 ```
@@ -110,9 +123,11 @@ Only ask when:
 
 ### Process
 
+> **Tool hint**: If `question` or `AskUserQuestion` tool is available, use it for structured input collection instead of free-text prompts.
+
 ```
 1. Synthesize points needing clarification from Discovery Report
-2. Present question list (max 3-5 most important questions)
+2. Present question list (max 3-5 most important questions) — use question tool if available
 3. Wait for user response or skip confirmation
 4. Record answers in Discovery Report ("Clarifications" section)
 5. Only proceed to Phase 3 after user confirmation
@@ -136,7 +151,7 @@ Based on the Discovery Report, I need to clarify the following:
 N. **UI Standards**: I detected this feature includes [list the UI patterns found].
    Which UI standard applies?
    - **A**: Existing file — specify: `docs/ui-standards/<pattern>.md`
-   - **B**: Describe the standard inline (I'll embed it in each UI bead's Technical Notes)
+   - **B**: Describe the standard inline (I'll embed it in each UI task's Technical Notes)
    - **C**: No standard — worker uses best judgement and follows existing component patterns
    - **D**: Multiple patterns with different standards — answer per pattern (e.g., list view: A → file X, form: B → describe inline)
 
@@ -157,25 +172,33 @@ After receiving answers, add section to `history/<feature>/discovery.md`:
 | Question | Answer | Impact |
 | -------- | ------ | ------ |
 | ...      | ...    | ...    |
-| UI standard (list view) | `docs/ui-standards/list-view.md` | Embedded in UI bead Technical Notes |
-| UI standard (form layout) | [inline description] | Embedded in UI bead Technical Notes |
+| UI standard (list view) | `docs/ui-standards/list-view.md` | Embedded in UI task Technical Notes |
+| UI standard (form layout) | [inline description] | Embedded in UI task Technical Notes |
 
 **User Confirmation**: [timestamp]
 ```
 
 ## Phase 3: Synthesis (Plan)
 
-Feed Discovery Report to `oracle` for gap analysis:
+Feed Discovery Report to `oracle` (Amp/hdcode) / `Plan` subagent (Claude) for gap analysis:
 
 ```
+# Amp / hdcode
 oracle(
+  task: "Analyze gap between current codebase and feature requirements",
+  context: "Discovery report attached. User wants: <feature>",
+  files: ["history/<feature>/discovery.md"]
+)
+
+# Claude
+Plan(
   task: "Analyze gap between current codebase and feature requirements",
   context: "Discovery report attached. User wants: <feature>",
   files: ["history/<feature>/discovery.md"]
 )
 ```
 
-`oracle` produces:
+The analysis produces:
 
 1. **Gap Analysis** - What exists vs what's needed
 2. **Approach Options** - 1-3 strategies with tradeoffs
@@ -230,54 +253,101 @@ Save to `history/<feature>/approach.md`:
 | User entity | LOW  | Follows existing | Proceed      |
 ```
 
-## Phase 4: Verification (Risk-Based)
+### Gate 1: Approve Planning Direction
 
-### For HIGH Risk Items → Create Spike Beads
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available to present options as structured choices.
 
-Spikes are mini-plans executed via `Task`:
-
-```bash
-br create "Spike: <question to answer>" -t epic -p 0
-br create "Spike: Test X" -t task --blocks <spike-epic>
-br create "Spike: Verify Y" -t task --blocks <spike-epic>
-```
-
-### Spike Bead Template
+Present the approach summary for user approval before proceeding:
 
 ```markdown
-# Spike: <specific question>
+## Planning Checkpoint — Approve Direction
 
-**Time-box**: 30 minutes
-**Output location**: .spikes/<spike-id>/
+**Goal**: <feature summary>
+**In scope**: <what's included>
+**Out of scope**: <what's excluded>
+**Recommended approach**: <brief description>
+**Key assumptions**: <list>
+**High risks**: <list with verification method>
 
-## Question
+Reply with one:
+1. **approve** — proceed with this direction
+2. **revise** — <what to change> (loops back to Phase 2 or 3)
+3. **stop** — end planning here
+```
 
-Can we <specific technical question>?
+- **approve** → Continue to Phase 4 (or Phase 5 if no HIGH risks)
+- **revise** → If scope/requirements wrong → back to Phase 2. If approach wrong → back to Phase 3.
+- **stop** → End planning. approach.md is the deliverable.
 
-## Success Criteria
+## Phase 4: Verification (Risk-Based)
 
-- [ ] Working throwaway code exists
-- [ ] Answer documented (yes/no + details)
-- [ ] Learnings captured for main plan
+### Gate 2: Confirm Spike Execution
 
-## On Completion
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available to present spike confirmation as structured choices.
 
-Close with: `br close <id> --reason "YES: <approach>" or "NO: <blocker>"`
+Before creating any spike team, present the HIGH risk items to the user:
+
+```markdown
+## Spikes Needed
+
+The following HIGH risk items need verification before planning continues:
+
+1. **<Component A>** — <reason> (time-box: 30 min)
+2. **<Component B>** — <reason> (time-box: 30 min)
+
+Shall I create a spike team to validate these? (yes / skip)
+```
+
+- **User says yes** → Proceed with spike team below
+- **User says skip** → Skip to Phase 5 (mark HIGH risk items as unvalidated in approach.md)
+
+### Create Spike Team
+
+Create a dedicated team for spike execution:
+
+```
+team_create(teamName="spike-<feature>", description="Spike validation for <feature>")
+```
+
+### Create Spike Tasks
+
+Create one task per spike question. Use `addBlockedBy` for dependencies between spikes:
+
+```
+task_create(
+  teamName="spike-<feature>",
+  subject="Spike: <specific question to answer>",
+  description="## Question\nCan we <specific technical question>?\n\n## Time-box\n30 minutes\n\n## Output\n`.spikes/YYYYMMDD-<feature>/<spike-name>/`\n\n## Success Criteria\n- [ ] Working throwaway code exists\n- [ ] Answer documented (yes/no + details)\n- [ ] Learnings captured for main plan"
+)
 ```
 
 ### Execute Spikes
 
-Use the `Task` tool:
+1. Review `task_list(teamName="spike-<feature>")` to identify independent tasks (no `blockedBy`)
+2. `Task()` per independent spike with time-box
+3. Workers write to `.spikes/YYYYMMDD-<feature>/<spike-name>/`
+4. On completion: `task_update(teamName, taskId, status="completed", description="YES: <approach>" or "NO: <blocker>")`
 
-1. `bv --robot-plan` to parallelize spikes
-2. `Task()` per spike with time-box
-3. Workers write to `.spikes/YYYYMMDD-<feature>/<spike-id>/`
-4. Close with learnings: `br close <id> --reason "<result>"`
+### Clean Up Spike Team
+
+After all spike tasks are completed:
+
+```
+team_delete(teamName="spike-<feature>")
+```
 
 ### Aggregate Spike Results
 
 ```
+# Amp / hdcode
 oracle(
+  task: "Synthesize spike results and update approach",
+  context: "Spikes completed. Results: ...",
+  files: ["history/<feature>/approach.md"]
+)
+
+# Claude
+Plan(
   task: "Synthesize spike results and update approach",
   context: "Spikes completed. Results: ...",
   files: ["history/<feature>/approach.md"]
@@ -286,11 +356,22 @@ oracle(
 
 Update approach.md with validated learnings.
 
-## Phase 5: Decomposition (hd-plan-to-beads skill)
+### If Spike Fails (NO: blocker)
 
-### Extract UI Standards for Beads
+If any spike returns "NO: \<blocker\>":
 
-Before loading `hd-plan-to-beads`, extract UI standard answers from `history/<feature>/discovery.md` Clarifications section.
+1. Update approach.md with the blocker details
+2. Present the blocker to the user via `question` tool if available:
+   - **Change approach** — revise the approach to avoid the blocker (back to Phase 3)
+   - **Use alternative** — if the spike suggested an alternative, adopt it and continue
+   - **Accept risk** — proceed anyway, document as accepted risk
+   - **Stop** — end planning here
+
+## Phase 5: Decomposition (Task Creation)
+
+### Extract UI Standards
+
+Before creating tasks, extract UI standard answers from `history/<feature>/discovery.md` Clarifications section.
 
 Build a UI standards map:
 ```
@@ -301,14 +382,13 @@ UI_STANDARDS = {
 }
 ```
 
-Pass this as explicit context when the `hd-plan-to-beads` skill loads:
-> "For any UI bead (pages, forms, views, dashboards), embed the relevant entry from this UI standards map in the bead's Technical Notes."
+For any UI task, embed the relevant UI standard in the task's description under Technical Notes.
 
-If no UI work was detected or user answered C (no standard), pass an empty map — `hd-plan-to-beads` will note "no standard defined" in UI bead Technical Notes.
+If no UI work was detected or user answered C (no standard), note "no standard defined" in UI task descriptions.
 
-### Security Pre-Check (before hd-plan-to-beads)
+### Security Pre-Check
 
-Scan `approach.md` and bead descriptions for security signals:
+Scan `approach.md` and task descriptions for security signals:
 
 | Signal Category | Keywords |
 |-----------------|----------|
@@ -318,7 +398,7 @@ Scan `approach.md` and bead descriptions for security signals:
 | Payment/sensitive data | payment, card, bank, transaction, billing, encrypt, vault, secret |
 | Multi-tenancy | tenant, organization, workspace, account isolation |
 
-If ANY signal triggered, auto-include applicable security beads in decomposition:
+If ANY signal triggered, auto-include applicable security tasks in decomposition:
 
 - `"Security: Input validation & injection hardening"` — if API surface signals
 - `"Security: Auth/authz review for [feature name]"` — if auth signals
@@ -326,177 +406,188 @@ If ANY signal triggered, auto-include applicable security beads in decomposition
 - `"Security: API field exposure audit & rate limiting"` — if API surface signals
 - `"Security: Payment data flow & compliance check"` — if payment signals
 
-> When in doubt about data sensitivity, include security beads. Cost of an extra bead is lower than a missed vulnerability.
+> When in doubt about data sensitivity, include security tasks. Cost of an extra task is lower than a missed vulnerability.
 
-Load the hd-plan-to-beads skill and create beads with embedded learnings:
+### Create Feature Team
 
-```bash
-skill("hd-plan-to-beads")
+```
+team_create(teamName="<feature>", description="Feature implementation: <feature name>")
 ```
 
-### Bead Requirements
+### Create Tasks with Dependencies
 
-Each bead MUST include:
+For each work item, create a task. Use `addBlockedBy` and `addBlocks` for dependency relationships:
 
-- **Spike learnings** embedded in description (if applicable)
+```
+# Independent tasks (no dependencies)
+task_create(
+  teamName="<feature>",
+  subject="Create Subscription entity and SubscriptionRepository port",
+  description="## Context\n<where this fits>\n\n## Requirements\n<what to implement>\n\n## Technical Notes\n- Follow existing entity pattern at `packages/domain/src/entities/user.ts`\n- ...\n\n## Acceptance Criteria\n- [ ] Entity created\n- [ ] Port defined\n- [ ] Passes type-check",
+  metadata='{"priority": 2, "fileScope": "packages/domain/**"}'
+)
+# → returns taskId "1"
+
+# Dependent tasks
+task_create(
+  teamName="<feature>",
+  subject="Implement SubscriptionRepository with Drizzle",
+  description="## Context\n...\n\n## Learnings from Spike\n> <embed spike learnings if applicable>\n> Reference: `.spikes/<feature>/<spike-name>/`\n\n## Acceptance Criteria\n- [ ] ...",
+  addBlockedBy="1",
+  metadata='{"priority": 2, "fileScope": "packages/infrastructure/**"}'
+)
+# → returns taskId "2"
+```
+
+### Task Requirements
+
+Each task MUST include in its description:
+
+- **Spike learnings** embedded (if applicable)
 - **Reference to .spikes/ code** for HIGH risk items
 - **Clear acceptance criteria**
-- **File scope** for track assignment
+- **File scope** in metadata for file reservation during execution
 
-### Example Bead with Learnings
+### Example Task with Learnings
 
 ```markdown
-# Implement Stripe webhook handler
-
 ## Context
 
-Spike bd-12 validated: Stripe SDK works with our Node version.
-See `.spikes/20250113-billing/webhook-test/` for working example.
+Handles Stripe webhook events for subscription lifecycle.
 
 ## Learnings from Spike
 
-- Must use `stripe.webhooks.constructEvent()` for signature verification
-- Webhook secret stored in `STRIPE_WEBHOOK_SECRET` env var
-- Raw body required (not parsed JSON)
+> Spike "Stripe webhook signature" validated:
+> - MUST use raw body (not parsed JSON) for signature verification
+> - Use `stripe.webhooks.constructEvent(rawBody, sig, secret)`
+> - Webhook secret from `STRIPE_WEBHOOK_SECRET` env var
+>
+> Reference: `.spikes/20250113-billing/webhook-test/handler.ts`
+
+## Requirements
+
+- Webhook endpoint at `/api/webhooks/stripe`
+- Signature verification before processing
+- Idempotent event handling
 
 ## Acceptance Criteria
 
-- [ ] Webhook endpoint at `/api/webhooks/stripe`
+- [ ] Raw body middleware configured
 - [ ] Signature verification implemented
-- [ ] Events: `checkout.session.completed`, `invoice.paid`
+- [ ] Events update subscription status correctly
+- [ ] Passes type-check
 ```
 
 ## Phase 6: Validation
 
-### Run bv Analysis
+### Analyze Task Graph
 
-```bash
-bv --robot-suggest   # Find missing dependencies
-bv --robot-insights  # Detect cycles, bottlenecks
-bv --robot-priority  # Validate priorities
+Read all tasks and analyze the dependency graph:
+
 ```
+task_list(teamName="<feature>")
+```
+
+Check for:
+
+1. **Missing dependencies** — Are there tasks that should depend on others but don't?
+2. **Circular dependencies** — Walk the `blockedBy` chains; no task should eventually block itself
+3. **Priority consistency** — Higher-priority tasks should not depend on lower-priority ones
+4. **Orphan tasks** — Every task should either block or be blocked by at least one other task (except the root)
+5. **Completeness** — Are all components from the approach.md covered?
 
 ### Fix Issues
 
-```bash
-br dep add <from> <to>      # Add missing deps
-br dep remove <from> <to>   # Break cycles
-br update <id> --priority X # Adjust priorities
+```
+# Add missing dependency
+task_update(teamName="<feature>", taskId="3", addBlockedBy="1")
+
+# Adjust priority
+task_update(teamName="<feature>", taskId="5", metadata='{"priority": 1}')
+
+# Remove and recreate task if fundamentally wrong
+task_delete(teamName="<feature>", taskId="4")
+task_create(teamName="<feature>", subject="...", description="...", addBlockedBy="2")
 ```
 
 ### Plan Final Review
 
 ```
+# Amp / hdcode
 oracle(
   task: "Review plan completeness and clarity",
-  context: "Plan ready. Check for gaps, unclear beads, missing deps.",
-  files: [".beads/"]
+  context: "Plan ready. Check for gaps, unclear tasks, missing deps.",
+  data: "<output of task_list>"
+)
+
+# Claude
+Plan(
+  task: "Review plan completeness and clarity",
+  context: "Plan ready. Check for gaps, unclear tasks, missing deps.",
+  data: "<output of task_list>"
 )
 ```
 
-## Phase 7: Track Planning
+### Gate 3: Approve Plan
 
-This phase creates an **execution-ready plan** so the orchestrator can spawn workers immediately without re-analyzing beads.
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available to present final approval as structured choices.
 
-### Step 1: Get Parallel Tracks
+Present the task graph for user approval before handoff to orchestrator:
 
-```bash
-bv --robot-plan 2>/dev/null | jq '.plan.tracks'
+```markdown
+## Final Planning Approval — Execution Handoff
+
+**Team**: <teamName>
+**Tasks**: <count> tasks
+**Critical path**: <longest dependency chain>
+
+### Task Graph
+
+| # | Task | Blocked By | File Scope |
+|---|------|------------|------------|
+| 1 | ...  | —          | ...        |
+| 2 | ...  | #1         | ...        |
+| ...| ... | ...        | ...        |
+
+### Open Risks / Accepted Assumptions
+
+- <any unvalidated HIGH risks if spikes were skipped>
+- <key assumptions>
+
+Reply with one:
+1. **approve** — hand off to orchestrator for execution
+2. **revise** — <feedback> (loops back to Phase 5 or 6)
+3. **hold** — save plan but do NOT hand off yet
 ```
 
-### Step 2: Assign File Scopes
+- **approve** → Plan is ready. Orchestrator can proceed.
+- **revise** → If task/dependency issue → back to Phase 5-6.
+- **hold** → Plan saved but not handed off. User can resume later.
 
-For each track, determine the file scope based on beads in that track:
-
-```bash
-# For each bead, check which files it touches
-br show <bead-id>  # Look at description for file hints
-```
-
-**Rules:**
-
-- File scopes must NOT overlap between tracks
-- Use glob patterns: `packages/sdk/**`, `apps/server/**`
-- If overlap unavoidable, merge into single track
-- **Max 3 beads per track** - If more, split into sequential tracks
-- **High file-touch beads get isolated tracks** - Beads updating many files should be in their own track to avoid conflicts
-
-### Step 3: Generate Agent Names
-
-Assign unique adjective+noun names to each track:
-
-- BlueLake, GreenCastle, RedStone, PurpleBear, etc.
-- Names are memorable identifiers, NOT role descriptions
-
-### Step 4: Create Execution Plan
+### Save Execution Plan
 
 Save to `history/YYYYMMDD-<feature>/execution-plan.md`:
 
 ```markdown
 # Execution Plan: <Feature Name>
 
-Epic: <epic-id>
+Team: <teamName>
+Spike Team: <spike-teamName or "N/A" if skipped>
 Generated: <date>
 
-## Tracks
+## Tasks
 
-| Track | Agent       | Beads (in order)      | File Scope        |
-| ----- | ----------- | --------------------- | ----------------- |
-| 1     | BlueLake    | bd-10 → bd-11 → bd-12 | `packages/sdk/**` |
-| 2     | GreenCastle | bd-20 → bd-21         | `packages/cli/**` |
-| 3     | RedStone    | bd-30 → bd-31 → bd-32 | `apps/server/**`  |
-
-## Track Details
-
-### Track 1: BlueLake - <track-description>
-
-**File scope**: `packages/sdk/**`
-**Beads**:
-
-1. `bd-10`: <title> - <brief description>
-2. `bd-11`: <title> - <brief description>
-3. `bd-12`: <title> - <brief description>
-
-### Track 2: GreenCastle - <track-description>
-
-**File scope**: `packages/cli/**`
-**Beads**:
-
-1. `bd-20`: <title> - <brief description>
-2. `bd-21`: <title> - <brief description>
-
-### Track 3: RedStone - <track-description>
-
-**File scope**: `apps/server/**`
-**Beads**:
-
-1. `bd-30`: <title> - <brief description>
-2. `bd-31`: <title> - <brief description>
-3. `bd-32`: <title> - <brief description>
-
-## Cross-Track Dependencies
-
-- Track 2 can start after bd-11 (Track 1) completes
-- Track 3 has no cross-track dependencies
+| # | Task | Blocked By | File Scope |
+|---|------|------------|------------|
+| 1 | ...  | —          | ...        |
+| 2 | ...  | #1         | ...        |
 
 ## Key Learnings (from Spikes)
 
-Embedded in beads, but summarized here for orchestrator reference:
+Embedded in tasks, but summarized here for reference:
 
 - <learning 1>
 - <learning 2>
-```
-
-### Validation
-
-Before finalizing, verify:
-
-```bash
-# No cycles in the graph
-bv --robot-insights 2>/dev/null | jq '.Cycles'
-
-# All beads assigned to tracks
-bv --robot-plan 2>/dev/null | jq '.plan.unassigned'
 ```
 
 ## Security Review Recommendation
@@ -516,15 +607,15 @@ bv --robot-plan 2>/dev/null | jq '.plan.unassigned'
 | Discovery Report  | `history/YYYYMMDD-<feature>/discovery.md`     | Codebase snapshot                  |
 | Approach Document | `history/YYYYMMDD-<feature>/approach.md`      | Strategy + risks                   |
 | Spike Code        | `.spikes/YYYYMMDD-<feature>/`                 | Reference implementations          |
-| Spike Learnings   | Embedded in beads                             | Context for workers                |
-| Beads             | `.beads/*.md`                                 | Executable work items              |
-| Execution Plan    | `history/YYYYMMDD-<feature>/execution-plan.md`| Track assignments for orchestrator |
+| Spike Learnings   | Embedded in task descriptions                 | Context for workers                |
+| Feature Team      | `team_status(teamName="<feature>")`           | Task graph with dependencies       |
+| Execution Plan    | `history/YYYYMMDD-<feature>/execution-plan.md`| Team name + task summary           |
 
 ## Optional: Task Finalize Hook
 
 If a Linear task URL was provided at the start of this session:
 1. Load `hd-task finalize <url>`
-   Pass context: outputs from this session (execution plan, bead list, approach doc, PR link / branch name)
+   Pass context: outputs from this session (execution plan, team name, approach doc, PR link / branch name)
 2. hd-task will: merge outputs into task template → update Linear → run hd-changelog
 
 Skip this step if no task URL is in context, or if the task was already updated.
@@ -535,19 +626,24 @@ Skip this step if no task URL is in context, or if the task was already updated.
 
 ### Tool Selection
 
-| Need                                    | Tool                                     |
-| --------------------------------------- | ---------------------------------------- |
-| Codebase structure, definitions, search | `finder`                                 |
-| External patterns                       | `librarian`                              |
-| Web research                            | `mcp__exa__web_search_exa`               |
-| Gap analysis                            | `oracle`                                 |
-| Create beads                            | `skill("hd-plan-to-beads")` + `br create` |
-| Validate graph                          | `bv --robot-*`                           |
+| Need                                    | Tool                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Codebase structure, definitions, search | `finder` (Amp/hdcode) / `Explore` subagent (Claude)    |
+| External patterns                       | `librarian`, `exa`                                                       |
+| Gap analysis                            | `oracle` (Amp/hdcode) / `Plan` subagent (Claude)                       |
+| Create spike team                       | `team_create` → `task_create` → `Task()` → `team_delete`                |
+| Create feature tasks                    | `team_create` → `task_create` (with `addBlockedBy`/`addBlocks`)          |
+| Validate task graph                     | `task_list` + agent reasoning                                            |
+| View task details                       | `task_get`                                                               |
+| Check team status                       | `team_status`                                                            |
+| User interaction (gates, clarification) | `question` / `AskUserQuestion` tool if available, else free-text prompt  |
 
 ### Common Mistakes
 
 - **Skipping discovery** → Plan misses existing patterns
 - **No risk assessment** → Surprises during execution
 - **No spikes for HIGH risk** → Blocked workers
-- **Missing learnings in beads** → Workers re-discover same issues
-- **No bv validation** → Broken dependency graph
+- **Missing learnings in tasks** → Workers re-discover same issues
+- **No dependency validation** → Broken task graph, circular dependencies
+- **Skipping Gate 1** → Decompose wrong approach, rework Phase 5-6
+- **Auto-handoff without Gate 3** → User surprised by worker execution

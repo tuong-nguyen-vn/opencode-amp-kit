@@ -1,14 +1,18 @@
 # Args Specification: hd-estimation
 
-**Version:** 2.0.0
+**Version:** 2.1.0
 
 ---
 
 ## Overview
 
-Optional `--audience` arg skips the interactive prompt. Useful for skill-to-skill composition.
+Optional `--audience` arg skips only the audience question. Storage location is intentionally resolved via interactive startup questions.
 
-**Mode is always `both`** (agent vs human-only dual-column). No mode or pricing args.
+**Output mode is always `triple`** (`eta.md` client-safe + `eta-agent.md` transparent agent + `eta-agent-human.md` comparison). No mode or pricing args.
+
+Storage scope is decided interactively at runtime:
+- `workspace` → save under current `<dir>/plans/...`
+- `general` → save under `<base>/plans/...`, where `<base>` resolves from `HD_HOME` → `~/.hd/config.yaml: hd_data_dir` → `~/.hd`
 
 ---
 
@@ -17,6 +21,8 @@ Optional `--audience` arg skips the interactive prompt. Useful for skill-to-skil
 ```
 --audience <internal|client>    Output audience (default: ask)
 ```
+
+No storage-location args by design. The skill asks a friendly startup question instead.
 
 **Values:**
 - `internal` — technical language, concise, skip explanatory sections

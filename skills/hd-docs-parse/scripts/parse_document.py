@@ -78,6 +78,11 @@ def build_config(args):
 
     kwargs = {}
 
+    # Caching off by default; use --cache to enable (pins dir so hits work cross-session)
+    kwargs["use_cache"] = getattr(args, "cache", False)
+    if kwargs["use_cache"]:
+        kwargs["cache_dir"] = str(Path.home() / ".cache" / "kreuzberg")
+
     # OCR
     if args.ocr or args.force_ocr:
         kwargs["ocr_backend"] = "tesseract"
@@ -194,6 +199,7 @@ def main():
     parser.add_argument("--lang", default="eng", help="OCR language codes (default: eng)")
     parser.add_argument("--metadata", action="store_true", help="Include document metadata")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
+    parser.add_argument("--cache", action="store_true", help="Enable result caching to speed up repeated extractions")
     parser.add_argument("--check", action="store_true", help="Check installation and dependencies")
 
     args = parser.parse_args()

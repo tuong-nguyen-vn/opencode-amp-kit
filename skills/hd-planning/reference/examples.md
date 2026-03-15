@@ -115,7 +115,7 @@ You can:
 ### Phase 3: Synthesis (Plan)
 
 ```
-# Amp
+# Amp / hdcode
 oracle(
   task: "Analyze billing feature requirements against codebase",
   files: ["history/billing/discovery.md"]
@@ -160,28 +160,83 @@ Plan(
 
 ---
 
-### Phase 4: Verification (Spikes)
+### Gate 1: Approve Planning Direction
 
-**Create Spike Beads:**
+```markdown
+## Planning Checkpoint — Approve Direction
 
-```bash
-br create "Spike: Billing Integration" -t epic -p 0
-# → bd-50
+**Goal**: Add billing module with Stripe integration for subscription management
+**In scope**: Subscription entity, Stripe checkout, webhooks, billing page
+**Out of scope**: Metered billing, invoicing, refunds
+**Recommended approach**: Clean Architecture layers (domain → infra → app → API → UI) with Stripe SDK
+**Key assumptions**: 3 fixed plans, 14-day trial for Pro, no usage-based billing
+**High risks**: Stripe SDK import (HIGH), Webhook signatures (HIGH)
 
-br create "Spike: Test Stripe SDK import and typing" -t task --blocks bd-50
-# → bd-51
-
-br create "Spike: Verify webhook signature handling" -t task --blocks bd-50
-# → bd-52
-
-br create "Spike: Checkout session creation flow" -t task --blocks bd-50
-# → bd-53
+Reply with one:
+1. **approve** — proceed with this direction
+2. **revise** — <what to change>
+3. **stop** — end planning here
 ```
 
-**Execute via Task tool (parallel workers):**
+**User says: approve**
 
-```bash
-bv --robot-plan  # Assigns spikes to parallel tracks
+---
+
+### Phase 4: Verification (Spikes)
+
+**Gate 2: Confirm Spike Execution**
+
+```markdown
+## Spikes Needed
+
+The following HIGH risk items need verification before planning continues:
+
+1. **Stripe SDK import** — New external dependency, need to verify typing (time-box: 30 min)
+2. **Webhook signatures** — Security-critical, need raw body handling (time-box: 30 min)
+3. **Checkout session** — Novel flow, need to verify redirect pattern (time-box: 30 min)
+
+Shall I create a spike team to validate these? (yes / skip)
+```
+
+**User says: yes**
+
+**Create Spike Team:**
+
+```
+team_create(teamName="spike-billing", description="Spike validation for billing module")
+```
+
+**Create Spike Tasks:**
+
+```
+task_create(
+  teamName="spike-billing",
+  subject="Spike: Test Stripe SDK import and typing",
+  description="## Question\nCan we import Stripe SDK with correct TypeScript types?\n\n## Time-box\n30 minutes\n\n## Output\n`.spikes/billing/stripe-sdk-test/`\n\n## Success Criteria\n- [ ] Working import\n- [ ] Typed customer object\n- [ ] Learnings documented"
+)
+# → taskId "1"
+
+task_create(
+  teamName="spike-billing",
+  subject="Spike: Verify webhook signature handling",
+  description="## Question\nHow to verify Stripe webhook signatures with raw body?\n\n## Time-box\n30 minutes\n\n## Output\n`.spikes/billing/webhook-test/`\n\n## Success Criteria\n- [ ] Signature verification working\n- [ ] Raw body middleware configured\n- [ ] Learnings documented"
+)
+# → taskId "2"
+
+task_create(
+  teamName="spike-billing",
+  subject="Spike: Checkout session creation flow",
+  description="## Question\nCan we create checkout sessions server-side and redirect?\n\n## Time-box\n30 minutes\n\n## Output\n`.spikes/billing/checkout-test/`\n\n## Success Criteria\n- [ ] Session created server-side\n- [ ] Redirect to session.url works\n- [ ] Learnings documented"
+)
+# → taskId "3"
+```
+
+**Execute spikes (all independent, can parallelize):**
+
+```
+Task() → Worker A: spike task #1 (Stripe SDK)
+Task() → Worker B: spike task #2 (Webhook)
+Task() → Worker C: spike task #3 (Checkout)
 ```
 
 Workers execute, write to `.spikes/billing/`:
@@ -199,121 +254,195 @@ Workers execute, write to `.spikes/billing/`:
     └── learnings.md
 ```
 
-**Close spikes with learnings:**
+**Complete spike tasks:**
 
-```bash
-br close bd-51 --reason "YES: SDK imports cleanly. Use Stripe namespace for types."
-br close bd-52 --reason "YES: Need raw body. Use stripe.webhooks.constructEvent()"
-br close bd-53 --reason "YES: Create session server-side, redirect to session.url"
+```
+task_update(teamName="spike-billing", taskId="1", status="completed",
+  description="YES: SDK imports cleanly. Use Stripe namespace for types.")
+
+task_update(teamName="spike-billing", taskId="2", status="completed",
+  description="YES: Need raw body. Use stripe.webhooks.constructEvent()")
+
+task_update(teamName="spike-billing", taskId="3", status="completed",
+  description="YES: Create session server-side, redirect to session.url")
+```
+
+**Clean up spike team:**
+
+```
+team_delete(teamName="spike-billing")
 ```
 
 ---
 
 ### Phase 5: Decomposition
 
-**Load hd-plan-to-beads skill and create main plan:**
+**Create Feature Team:**
 
-```bash
-br create "Epic: Billing Module" -t epic -p 1
-# → bd-60
-
-# Domain layer (no deps, can parallelize)
-br create "Create Subscription entity and SubscriptionRepository port" -t task --blocks bd-60
-# → bd-61
-
-br create "Create Plan entity" -t task --blocks bd-60
-# → bd-62
-
-# Infrastructure (depends on domain)
-br create "Implement SubscriptionRepository with Drizzle" -t task --blocks bd-60 --deps bd-61
-# → bd-63
-
-br create "Create Drizzle schema for subscriptions and plans" -t task --blocks bd-60 --deps bd-61,bd-62
-# → bd-64
-
-# Application layer
-br create "Implement CreateSubscription use case" -t task --blocks bd-60 --deps bd-63
-# → bd-65
-
-br create "Implement CancelSubscription use case" -t task --blocks bd-60 --deps bd-63
-# → bd-66
-
-# Stripe integration (HIGH risk - has spike learnings)
-br create "Implement Stripe checkout session creation" -t task --blocks bd-60 --deps bd-65
-# → bd-67  ← Embed learnings from bd-53
-
-br create "Implement Stripe webhook handler" -t task --blocks bd-60 --deps bd-63
-# → bd-68  ← Embed learnings from bd-52
-
-# API layer
-br create "Create billing oRPC router" -t task --blocks bd-60 --deps bd-65,bd-66,bd-67
-# → bd-69
-
-# UI layer
-br create "Create billing page with plan selection" -t task --blocks bd-60 --deps bd-69
-# → bd-70
-
-br create "Implement checkout flow UI" -t task --blocks bd-60 --deps bd-69,bd-70
-# → bd-71
+```
+team_create(teamName="billing", description="Feature implementation: Billing Module with Stripe")
 ```
 
-**Example bead with embedded learnings (bd-68):**
+**Create tasks with dependencies:**
 
-```markdown
-# Implement Stripe webhook handler
+```
+# Domain layer (no deps, can parallelize)
+task_create(teamName="billing",
+  subject="Create Subscription entity and SubscriptionRepository port",
+  description="## Context\nNew entity following existing User pattern.\n\n## Requirements\n- Subscription entity with fields: id, userId, planId, status, trialEndsAt, currentPeriodEnd\n- SubscriptionRepository port\n\n## Acceptance Criteria\n- [ ] Entity created at packages/domain/src/entities/subscription.ts\n- [ ] Port defined at packages/domain/src/ports/subscription-repository.ts\n- [ ] Passes type-check",
+  metadata='{"priority": 2, "fileScope": "packages/domain/**"}')
+# → taskId "1"
 
-## Context
+task_create(teamName="billing",
+  subject="Create Plan entity",
+  description="## Context\n3 fixed plans: Free, Pro ($29), Enterprise.\n\n## Requirements\n- Plan entity with fields: id, name, stripeProductId, stripePriceId, price, features\n\n## Acceptance Criteria\n- [ ] Entity created\n- [ ] Passes type-check",
+  metadata='{"priority": 2, "fileScope": "packages/domain/**"}')
+# → taskId "2"
 
-Handles Stripe webhook events for subscription lifecycle.
+# Infrastructure (depends on domain)
+task_create(teamName="billing",
+  subject="Implement SubscriptionRepository with Drizzle",
+  description="## Context\nFollow existing repository pattern.\n\n## Acceptance Criteria\n- [ ] Repository implements port\n- [ ] CRUD operations working\n- [ ] Passes type-check",
+  addBlockedBy="1",
+  metadata='{"priority": 2, "fileScope": "packages/infrastructure/**"}')
+# → taskId "3"
 
-## Learnings from Spike bd-52
+task_create(teamName="billing",
+  subject="Create Drizzle schema for subscriptions and plans",
+  description="## Context\nSchema at packages/db/src/schema/.\n\n## Acceptance Criteria\n- [ ] Schema defined\n- [ ] Migration runs successfully",
+  addBlockedBy="1,2",
+  metadata='{"priority": 2, "fileScope": "packages/db/**"}')
+# → taskId "4"
 
-> - MUST use raw body (not parsed JSON) for signature verification
-> - Use `stripe.webhooks.constructEvent(rawBody, sig, secret)`
-> - Webhook secret from `STRIPE_WEBHOOK_SECRET` env var
-> - Handle: checkout.session.completed, invoice.paid, customer.subscription.deleted
->
-> Reference: `.spikes/billing/webhook-test/handler.ts`
+# Application layer
+task_create(teamName="billing",
+  subject="Implement CreateSubscription use case",
+  description="## Context\nFollow existing use case pattern.\n\n## Acceptance Criteria\n- [ ] Use case creates subscription\n- [ ] Handles 14-day trial for Pro plan\n- [ ] Passes type-check",
+  addBlockedBy="3",
+  metadata='{"priority": 2, "fileScope": "packages/application/**"}')
+# → taskId "5"
 
-## Requirements
+task_create(teamName="billing",
+  subject="Implement CancelSubscription use case",
+  description="## Context\nFollow existing use case pattern.\n\n## Acceptance Criteria\n- [ ] Use case cancels subscription\n- [ ] Passes type-check",
+  addBlockedBy="3",
+  metadata='{"priority": 2, "fileScope": "packages/application/**"}')
+# → taskId "6"
 
-- Webhook endpoint at `/api/webhooks/stripe`
-- Signature verification before processing
-- Idempotent event handling
+# Stripe integration (HIGH risk - has spike learnings)
+task_create(teamName="billing",
+  subject="Implement Stripe checkout session creation",
+  description="## Context\nServer-side checkout session creation.\n\n## Learnings from Spike\n> - Create session server-side, redirect to session.url\n> - Reference: `.spikes/billing/checkout-test/session.ts`\n\n## Acceptance Criteria\n- [ ] Checkout session created for each plan\n- [ ] Redirect to Stripe hosted checkout\n- [ ] Passes type-check",
+  addBlockedBy="5",
+  metadata='{"priority": 1, "fileScope": "packages/infrastructure/**"}')
+# → taskId "7"
 
-## Acceptance Criteria
+task_create(teamName="billing",
+  subject="Implement Stripe webhook handler",
+  description="## Context\nHandles Stripe webhook events for subscription lifecycle.\n\n## Learnings from Spike\n> - MUST use raw body (not parsed JSON) for signature verification\n> - Use `stripe.webhooks.constructEvent(rawBody, sig, secret)`\n> - Webhook secret from `STRIPE_WEBHOOK_SECRET` env var\n> - Handle: checkout.session.completed, invoice.paid, customer.subscription.deleted\n> - Reference: `.spikes/billing/webhook-test/handler.ts`\n\n## Acceptance Criteria\n- [ ] Raw body middleware configured\n- [ ] Signature verification implemented\n- [ ] Events update subscription status correctly\n- [ ] Passes type-check",
+  addBlockedBy="3",
+  metadata='{"priority": 1, "fileScope": "packages/api/**"}')
+# → taskId "8"
 
-- [ ] Raw body middleware configured
-- [ ] Signature verification implemented
-- [ ] Events update subscription status correctly
-- [ ] Passes `bun run check-types`
+# API layer
+task_create(teamName="billing",
+  subject="Create billing oRPC router",
+  description="## Context\nFollow existing router pattern.\n\n## Acceptance Criteria\n- [ ] Routes for: list plans, create subscription, cancel subscription\n- [ ] Passes type-check",
+  addBlockedBy="5,6,7",
+  metadata='{"priority": 2, "fileScope": "packages/api/**"}')
+# → taskId "9"
+
+# UI layer
+task_create(teamName="billing",
+  subject="Create billing page with plan selection",
+  description="## Context\nBilling page showing 3 plans.\n\n## Acceptance Criteria\n- [ ] Plan cards with features comparison\n- [ ] CTA buttons per plan\n- [ ] Passes type-check",
+  addBlockedBy="9",
+  metadata='{"priority": 2, "fileScope": "apps/web/**"}')
+# → taskId "10"
+
+task_create(teamName="billing",
+  subject="Implement checkout flow UI",
+  description="## Context\nCheckout flow redirecting to Stripe.\n\n## Acceptance Criteria\n- [ ] Loading state during redirect\n- [ ] Success/cancel return pages\n- [ ] Passes type-check",
+  addBlockedBy="9,10",
+  metadata='{"priority": 2, "fileScope": "apps/web/**"}')
+# → taskId "11"
 ```
 
 ---
 
 ### Phase 6: Validation
 
-```bash
-bv --robot-suggest   # Check for missing deps
-bv --robot-insights  # Find bottlenecks
-bv --robot-priority  # Validate priorities
+**Read task graph:**
+
 ```
+task_list(teamName="billing")
+```
+
+**Agent analyzes the dependency graph:**
+
+- ✅ No circular dependencies found
+- ✅ All tasks have acceptance criteria
+- ✅ Spike learnings embedded in tasks #7 and #8
+- ⚠️ Tasks #9 depends on #5, #6, #7 — could be a bottleneck
+- ✅ Priorities consistent (Stripe integration tasks at priority 1)
 
 **Plan final review:**
 
 ```
-# Amp
+# Amp / hdcode
 oracle(
   task: "Review billing plan for completeness",
-  files: [".beads/bd-60.md", ".beads/bd-61.md", ...]
+  data: "<output of task_list>"
 )
 
 # Claude
 Plan(
   task: "Review billing plan for completeness",
-  files: [".beads/bd-60.md", ".beads/bd-61.md", ...]
+  data: "<output of task_list>"
 )
 ```
+
+---
+
+### Gate 3: Approve Plan
+
+```markdown
+## Final Planning Approval — Execution Handoff
+
+**Team**: billing
+**Tasks**: 11 tasks
+**Critical path**: #1 → #3 → #5 → #7 → #9 → #10 → #11
+
+### Task Graph
+
+| # | Task | Blocked By | File Scope |
+|---|------|------------|------------|
+| 1 | Create Subscription entity | — | `packages/domain/**` |
+| 2 | Create Plan entity | — | `packages/domain/**` |
+| 3 | Implement SubscriptionRepository | #1 | `packages/infrastructure/**` |
+| 4 | Create Drizzle schema | #1, #2 | `packages/db/**` |
+| 5 | CreateSubscription use case | #3 | `packages/application/**` |
+| 6 | CancelSubscription use case | #3 | `packages/application/**` |
+| 7 | Stripe checkout session | #5 | `packages/infrastructure/**` |
+| 8 | Stripe webhook handler | #3 | `packages/api/**` |
+| 9 | Billing oRPC router | #5, #6, #7 | `packages/api/**` |
+| 10 | Billing page | #9 | `apps/web/**` |
+| 11 | Checkout flow UI | #9, #10 | `apps/web/**` |
+
+### Open Risks / Accepted Assumptions
+
+- All HIGH risks validated via spikes (Stripe SDK, webhooks, checkout)
+- 3 fixed plans assumed (Free, Pro, Enterprise)
+
+Reply with one:
+1. **approve** — hand off to orchestrator for execution
+2. **revise** — <feedback>
+3. **hold** — save plan but do NOT hand off yet
+```
+
+**User says: approve**
+
+→ Execution plan saved to `history/20250113-billing/execution-plan.md`. Ready for orchestrator handoff.
 
 ---
 
@@ -361,22 +490,95 @@ No HIGH risk → Skip spike phase.
 
 ---
 
+### Gate 1: Approve Planning Direction
+
+```markdown
+## Planning Checkpoint — Approve Direction
+
+**Goal**: Add avatar upload for user profiles
+**In scope**: Avatar field, upload endpoint, profile display
+**Out of scope**: Image cropping, gallery
+**Recommended approach**: Add field to User entity, S3 upload using existing utility, profile UI update
+**Key assumptions**: Single avatar per user, S3 utility already works
+**High risks**: None
+
+Reply with one:
+1. **approve** — proceed
+2. **revise** — <what to change>
+3. **stop** — end planning here
+```
+
+**User says: approve**
+
+---
+
 ### Phase 4: Verification (Skipped)
 
-All MEDIUM or LOW → Proceed directly to decomposition.
+All MEDIUM or LOW → No spike gate shown → Proceed directly to decomposition.
 
 ---
 
 ### Phase 5: Decomposition
 
-```bash
-br create "Epic: User Avatar" -t epic -p 2
-br create "Add avatarUrl field to User entity" -t task --blocks bd-80
-br create "Add avatar upload endpoint with S3" -t task --blocks bd-80 --deps bd-81
-br create "Add avatar display to profile UI" -t task --blocks bd-80 --deps bd-82
+```
+team_create(teamName="user-avatar", description="Feature: User Avatar Upload")
+
+task_create(teamName="user-avatar",
+  subject="Add avatarUrl field to User entity",
+  description="## Requirements\n- Add avatarUrl optional field\n- Update schema\n\n## Acceptance Criteria\n- [ ] Field added\n- [ ] Migration runs\n- [ ] Passes type-check",
+  metadata='{"priority": 2, "fileScope": "packages/domain/**"}')
+# → taskId "1"
+
+task_create(teamName="user-avatar",
+  subject="Add avatar upload endpoint with S3",
+  description="## Requirements\n- Upload endpoint\n- S3 integration using existing utility\n- Image validation (size, type)\n\n## Acceptance Criteria\n- [ ] Endpoint at /api/users/:id/avatar\n- [ ] Uploads to S3\n- [ ] Passes type-check",
+  addBlockedBy="1",
+  metadata='{"priority": 2, "fileScope": "packages/api/**"}')
+# → taskId "2"
+
+task_create(teamName="user-avatar",
+  subject="Add avatar display to profile UI",
+  description="## Requirements\n- Display avatar in profile\n- Fallback for no avatar\n\n## Acceptance Criteria\n- [ ] Avatar displayed\n- [ ] Fallback works\n- [ ] Passes type-check",
+  addBlockedBy="2",
+  metadata='{"priority": 2, "fileScope": "apps/web/**"}')
+# → taskId "3"
 ```
 
-Small, low-risk feature → 3 beads, no spikes, linear dependency.
+Small, low-risk feature → 3 tasks, no spikes, linear dependency.
+
+---
+
+### Gate 3: Approve Plan
+
+```markdown
+## Final Planning Approval — Execution Handoff
+
+**Team**: user-avatar
+**Tasks**: 3 tasks
+**Critical path**: #1 → #2 → #3
+
+### Task Graph
+
+| # | Task | Blocked By | File Scope |
+|---|------|------------|------------|
+| 1 | Add avatarUrl field to User entity | — | `packages/domain/**` |
+| 2 | Add avatar upload endpoint with S3 | #1 | `packages/api/**` |
+| 3 | Add avatar display to profile UI | #2 | `apps/web/**` |
+
+### Open Risks / Accepted Assumptions
+
+- No HIGH risks
+- S3 utility assumed working
+
+Reply with one:
+1. **approve** — hand off to orchestrator for execution
+2. **revise** — <feedback>
+3. **hold** — save plan but do NOT hand off yet
+```
+
+**User says: approve**
+
+→ Ready for orchestrator handoff.
 
 ---
 

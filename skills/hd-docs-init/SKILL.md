@@ -16,13 +16,13 @@ Bootstrap documentation from codebase analysis. One-time setup for new/undocumen
 REQUEST → SCAN → ANALYZE → GENERATE → REVIEW → APPLY
 ```
 
-| Phase       | Action                            | Tools                                                          |
-| ----------- | --------------------------------- | -------------------------------------------------------------- |
-| 1. Scan     | Discover codebase structure       | `finder`                                                       |
-| 2. Analyze  | Understand architecture, patterns | `Task` (4 parallel agents) + `oracle` for synthesis            |
-| 3. Generate | Create doc drafts                 | `Task` (parallel per doc type)                                 |
-| 4. Review   | Validate against code             | `Task` (`finder`)                                              |
-| 5. Apply    | Write docs with diagrams          | `Write` / `Edit`                                               |
+| Phase       | Action                            | Tools (Amp/hdcode / Claude)                                                          |
+| ----------- | --------------------------------- | ----------------------------------------------------------------------------- |
+| 1. Scan     | Discover codebase structure       | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                                 |
+| 2. Analyze  | Understand architecture, patterns | `Task` (4 parallel agents) + `oracle` (Amp/hdcode) / `Plan` (Claude) for synthesis  |
+| 3. Generate | Create doc drafts                 | `Task` (parallel per doc type)                                                |
+| 4. Review   | Validate against code             | `Task` (`finder` (Amp/hdcode) / `Explore` subagent (Claude))                        |
+| 5. Apply    | Write docs with diagrams          | `create_file` / `edit_file` (Amp/hdcode) / `Write` / `Edit` (Claude)               |
 
 ## Phase 0: Request
 
@@ -41,10 +41,15 @@ Use `DOCS_LANGUAGE` when generating the Language Policy section in AGENTS.md.
 ### 1.1 Get Project Structure
 
 ```bash
-# Use finder to understand structure
+# Amp: use finder to understand structure
 finder "project structure and key directories"
 finder "existing documentation files"
 finder "package.json or Cargo.toml or go.mod or pyproject.toml"
+
+# Claude: use Explore subagent to understand structure
+Explore subagent "project structure and key directories"
+Explore subagent "existing documentation files"
+Explore subagent "package.json or Cargo.toml or go.mod or pyproject.toml"
 ```
 
 ### 1.2 Identify Project Type
@@ -85,7 +90,7 @@ Save to `history/docs-init/scan.md`:
 <type> (monorepo / single-package / multi-service)
 
 ## Structure
-<tree output from finder>
+<tree output from finder (Amp/hdcode) / Explore subagent (Claude)>
 
 ## Key Directories
 | Directory | Purpose |
@@ -131,9 +136,9 @@ Task() → Agent D: External integrations (DBs, APIs, services)
 **Architecture Agent:**
 ```
 Understand the scan report and explore the codebase:
-1. finder to understand key directories structure
-2. finder "entry point OR main OR app OR server"
-3. finder for core classes/functions
+1. finder (Amp/hdcode) / Explore subagent (Claude) to understand key directories structure
+2. finder (Amp/hdcode) / Explore subagent (Claude) "entry point OR main OR app OR server"
+3. finder (Amp/hdcode) / Explore subagent (Claude) for core classes/functions
 
 Return:
 {
@@ -147,7 +152,7 @@ Return:
 **Pattern Agent:**
 ```
 Analyze coding patterns in the codebase:
-1. finder "hook OR middleware OR decorator OR handler"
+1. finder (Amp/hdcode) / Explore subagent (Claude) "hook OR middleware OR decorator OR handler"
 2. Look for consistent naming conventions
 3. Identify error handling patterns
 
@@ -163,8 +168,8 @@ Return:
 **API/CLI Agent:**
 ```
 Discover public interfaces:
-1. finder "route OR endpoint OR command OR export"
-2. finder for exported symbols
+1. finder (Amp/hdcode) / Explore subagent (Claude) "route OR endpoint OR command OR export"
+2. finder (Amp/hdcode) / Explore subagent (Claude) for exported symbols
 3. Understand API route files or CLI command files
 
 Return:
@@ -177,9 +182,30 @@ Return:
 
 ### 2.3 Synthesis
 
-Use `oracle`:
+**Amp** — use `oracle`:
 ```
 oracle(
+  task: "Synthesize analysis into architecture overview",
+  context: """
+    Scan report: <scan.md>
+    Architecture: <agent A output>
+    Patterns: <agent B output>
+    Interfaces: <agent C output>
+    Integrations: <agent D output>
+    
+    Output:
+    1. High-level architecture description
+    2. Component relationships
+    3. Key patterns and conventions
+    4. Recommended doc structure
+  """,
+  files: ["history/docs-init/scan.md"]
+)
+```
+
+**Claude** — use `Plan` subagent:
+```
+Plan(
   task: "Synthesize analysis into architecture overview",
   context: """
     Scan report: <scan.md>
@@ -218,6 +244,7 @@ Based on analysis, determine which docs to create using doc-mapping conventions.
 | Migration       | `docs/MIGRATION.md`                       |
 | Security standards  | `docs/SECURITY_STANDARDS.md` |
 | Coding standards    | `docs/CODING_STANDARDS.md`   |
+| Review standards    | `docs/REVIEW_STANDARDS.md`   |
 
 > **AGENTS.md vs CLAUDE.md**: `AGENTS.md` is the full development guidelines file read by Amp agents. `CLAUDE.md` is a short Claude Code configuration file that points Claude agents to `AGENTS.md`. Always generate both — they serve different agent runtimes but the same guidelines.
 
@@ -233,6 +260,8 @@ Task() → docs/ARCHITECTURE.md generator
 Task() → Package-specific AGENTS.md generators
 Task() → docs/SECURITY_STANDARDS.md generator (if any security signals detected in scan)
 Task() → docs/CODING_STANDARDS.md generator (always)
+Task() → docs/REVIEW_STANDARDS.md generator (always)
+Task() → docs/KNOWN_ISSUES.md generator (always)
 ```
 
 ### 3.3 Doc Templates
@@ -411,13 +440,39 @@ Always generate `docs/CODING_STANDARDS.md` on every hd-docs-init run (no signal 
 
 4. Write to `docs/CODING_STANDARDS.md`
 
+---
+
+### 3.6 REVIEW_STANDARDS.md Generation
+
+Always generate `docs/REVIEW_STANDARDS.md` on every hd-docs-init run (no signal required).
+
+1. Start from the base template at `skills/hd-code-review/REVIEW_STANDARDS.md`
+
+2. Map detected project type to `tech_stack`:
+   | Project type (from Phase 1.2) | tech_stack value |
+   |-------------------------------|-----------------|
+   | Node.js / TypeScript          | nodejs          |
+   | Node.js Monorepo              | nodejs          |
+   | .NET Core / .NET 5+           | dotnet          |
+   | .NET Framework                | dotnet          |
+   | .NET Solution (multi-project) | dotnet          |
+   | Mixed (e.g. .NET API + Node frontend) | [dotnet, nodejs] |
+   | Other / unknown               | ~ (leave blank) |
+
+3. Pre-fill `tech_stack:` with the detected value as a convenience hint. The skill also auto-detects from diff
+   extensions at review time, so this field can remain `~` if left unchanged.
+   Add comment at top: `# Generated by docs-init — tech_stack is optional (auto-detected from diff); set only to override`
+   Add reference: `# Base template: see hd-code-review/REVIEW_STANDARDS.md in your Claude skills directory (~/.claude/skills/hd-code-review/REVIEW_STANDARDS.md)`
+
+4. Write to `docs/REVIEW_STANDARDS.md`
+
 ## Phase 4: Review
 
-### 4.1 Validation via finder
+### 4.1 Validation via finder (Amp/hdcode) / Explore Subagent (Claude)
 
 ```
 Task(
-  subagent_type: "finder",
+  subagent_type: "finder (Amp/hdcode) / Explore (Claude)",
   prompt: """
     Review these generated docs against the actual codebase:
     <list of generated doc files>
@@ -449,8 +504,8 @@ Task(
 ### 5.1 Create/Update Files
 
 ```
-Write → for new docs
-Edit  → for existing docs (preserve existing content, extend rather than replace)
+create_file (Amp/hdcode) / Write (Claude) → for new docs
+edit_file (Amp/hdcode) / Edit (Claude)    → for existing docs (preserve existing content, extend rather than replace)
 ```
 
 ### 5.2 Architecture Diagrams
@@ -482,7 +537,7 @@ User: "Initialize docs for this new project"
    Agent C: REST API at /api/*, CLI has 5 commands
    Agent D: PostgreSQL, Redis cache
    
-3. `oracle` synthesizes:
+3. `oracle` (Amp/hdcode) / `Plan` subagent (Claude) synthesizes:
    → 3-layer architecture: CLI → SDK → Server → DB
    → Recommend: AGENTS.md, docs/ARCHITECTURE.md, package AGENTS.md files
    
@@ -496,23 +551,23 @@ User: "Initialize docs for this new project"
    Task → docs/CODING_STANDARDS.md (always; pre-filled from pattern analysis)
    
 5. Review:
-   `oracle` validates all docs match code
+   `oracle` (Amp/hdcode) / `Plan` subagent (Claude) validates all docs match code
    
 6. Apply:
-   Write for each doc
+   create_file for each doc
    mermaid for architecture diagrams
 ```
 
 ## Tool Quick Reference
 
-| Goal                  | Tool                                               |
-| --------------------- | -------------------------------------------------- |
-| Find code/structure   | `finder`                                           |
-| Parallel analysis     | `Task` (spawn multiple)                            |
-| Synthesis             | `oracle`                                           |
-| Validate docs         | `Task` (`finder`)                                  |
-| Create docs           | `Write`                                            |
-| Update docs           | `Edit`                                             |
+| Goal                  | Tool (Amp/hdcode / Claude)                                               |
+| --------------------- | ----------------------------------------------------------------- |
+| Find code/structure   | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                     |
+| Parallel analysis     | `Task` (spawn multiple)                                           |
+| Synthesis             | `oracle` (Amp/hdcode) / `Plan` (Claude)                                 |
+| Validate docs         | `Task` (`finder` (Amp/hdcode) / `Explore` subagent (Claude))            |
+| Create docs           | `create_file` (Amp/hdcode) / `Write` (Claude)                           |
+| Update docs           | `edit_file` (Amp/hdcode) / `Edit` (Claude)                              |
 
 ## Quality Checklist
 
@@ -527,6 +582,8 @@ User: "Initialize docs for this new project"
 - [ ] AGENTS.md generated (always required)
 - [ ] CLAUDE.md generated pointing to AGENTS.md (always required)
 - [ ] docs/CODING_STANDARDS.md generated (always required)
+- [ ] docs/REVIEW_STANDARDS.md generated (always required)
+- [ ] docs/KNOWN_ISSUES.md generated (always required)
 ```
 
 ## Output Summary Notes
@@ -540,6 +597,8 @@ After generation, report the following to the user:
 | `docs/ARCHITECTURE.md` | created | Verify diagrams match code |
 | `docs/SECURITY_STANDARDS.md` | created | Set `applicable_compliance` if security signals were detected |
 | `docs/CODING_STANDARDS.md` | created | Edit `docs/CODING_STANDARDS.md` to enable project policies (feature flags, observability, i18n) as `required: yes` |
+| `docs/REVIEW_STANDARDS.md` | created | Verify `tech_stack` is correct; add `custom_aspects` and `aspect_escalations` as needed |
+| `docs/KNOWN_ISSUES.md` | created | Populate with project-specific known issues and accepted configuration debt |
 
 ## Troubleshooting
 

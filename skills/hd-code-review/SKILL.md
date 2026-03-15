@@ -89,6 +89,19 @@ Display: `Review standards loaded. Stack: <explicit value or 'auto-detect'> | Es
 
 ---
 
+## Phase 1.6: Known Issues Load
+
+Load `docs/KNOWN_ISSUES.md` if it exists in the project root:
+
+| Condition | Action |
+|-----------|--------|
+| File exists | Parse all `## KI-NNN` entries into `KNOWN_ISSUES` list. Each entry captures: ID, title, scope, reason, accepted-on, target-fix. |
+| File does not exist | `KNOWN_ISSUES` = empty list. |
+
+Display: `Known issues loaded: <N> entries.` or `Known issues: none (docs/KNOWN_ISSUES.md not found).`
+
+---
+
 ## Phase 2: Diff Fetch
 
 Run:
@@ -106,6 +119,28 @@ Assess diff size:
   Accept a path scope from the user, or proceed with the full diff if the user confirms.
 
 Display: `Diff: <N> lines changed across <M> files`
+
+**Remote URL detection** (run in parallel with diff, does not block):
+
+```bash
+git remote get-url origin
+```
+
+Parse the output into `PLATFORM_LINK_BASE`:
+
+| Remote URL pattern | Platform | `PLATFORM_LINK_BASE` |
+|--------------------|----------|----------------------|
+| `https://github.com/<owner>/<repo>[.git]` | GitHub | `https://github.com/<owner>/<repo>/blob/<SOURCE_BRANCH>` |
+| `git@github.com:<owner>/<repo>.git` | GitHub | `https://github.com/<owner>/<repo>/blob/<SOURCE_BRANCH>` |
+| `https://gitlab.com/<owner>/<repo>[.git]` | GitLab | `https://gitlab.com/<owner>/<repo>/-/blob/<SOURCE_BRANCH>` |
+| `git@gitlab.com:<owner>/<repo>.git` | GitLab | `https://gitlab.com/<owner>/<repo>/-/blob/<SOURCE_BRANCH>` |
+| `https://bitbucket.org/<owner>/<repo>[.git]` | Bitbucket | `https://bitbucket.org/<owner>/<repo>/src/<SOURCE_BRANCH>` |
+| Any other host (self-hosted) | unknown | `~` |
+| Command fails / no remote | none | `~` |
+
+If `REVIEW_STANDARDS.md` has `remote_url` set (Layer 2 override), use it instead and skip `git remote get-url origin` parsing. The `remote_url` value IS the `PLATFORM_LINK_BASE` (append `/<SOURCE_BRANCH>` if the value ends with the repo path and has no branch segment, or use as-is if it already includes the branch path).
+
+Store as `PLATFORM_LINK_BASE` (`~` = unavailable — fall back to IDE-only links).
 
 ---
 
@@ -152,6 +187,11 @@ Detect task type:
 | `.php` + CakePHP signals (`src/Controller/`, `config/routes.php`, `"cakephp/cakephp"` in `composer.json`) | `php` + `cakephp` |
 | `.php` + WordPress signals (`wp-config.php`, `wp-content/`, `functions.php`, WP function calls) | `php` + `wordpress` |
 | `.scala` `build.sbt` | `scala` |
+| `.cls` `.trigger` `.apex` | `apex` |
+| `.html` or `.js` under `lwc/` path | `lwc` |
+| `.cls` + `.html`/`.js` under `lwc/` path | `apex` + `lwc` |
+| `.cmp` `.app` `.evt` `.intf` | `aura` |
+| `.page` or `.component` under `pages/` path | `visualforce` |
 | Multiple sets present | all matching presets — checks scoped to relevant file types |
 | None of the above | none |
 
@@ -191,6 +231,37 @@ When multiple stacks are active, scope each stack's checks to files of that type
 
 ### Custom Aspects (Tier 2)
 <CUSTOM_ASPECTS entries with tier: 2, or "none">
+
+### Known Issues
+<KNOWN_ISSUES list (ID, title, scope, reason, target-fix for each entry), or "none">
+
+### Cross-Reference Instruction
+When generating findings: if a finding topic or file scope overlaps with a known issue entry above, append `[Known Issue: KI-NNN — <title>]` to that finding and downgrade its severity to **INFO**. Do NOT omit the finding — preserve full visibility. A finding can match at most one KI entry.
+
+### Platform Link Base
+<PLATFORM_LINK_BASE value, or "~" if unavailable>
+
+### Finding Format (REQUIRED)
+Every finding header MUST include the affected file AND line number as clickable links.
+
+**When `Platform Link Base` is set (not `~`)** — produce dual links: IDE link + platform link:
+```
+**<PREFIX>:<N>** — <🔴/🟡> <Label> · [<file>:<line>](<file>#L<line>) · [↗](<PLATFORM_LINK_BASE>/<file>#L<line>)
+**<PREFIX>:<N>** — <🔴/🟡> <Label> · [<file>:<start>-<end>](<file>#L<start>-L<end>) · [↗](<PLATFORM_LINK_BASE>/<file>#L<start>-L<end>)
+```
+
+**When `Platform Link Base` is `~`** — IDE link only:
+```
+**<PREFIX>:<N>** — <🔴/🟡> <Label> · [<file>:<line>](<file>#L<line>)
+**<PREFIX>:<N>** — <🔴/🟡> <Label> · [<file>:<start>-<end>](<file>#L<start>-L<end>)
+```
+
+Rules:
+- Extract line numbers from the diff `@@` hunk headers and `+`/`-` line markers
+- Use the **new file** (post-patch) line number where the issue appears
+- For a range, use `start-end` in display text and `#L<start>-L<end>` as the anchor
+- The anchor MUST be `#L<line>` (e.g., `#L140`) — never `#<line>` or `:<line>`
+- If no specific line can be determined, omit the line number rather than guess
 ```
 
 ---
@@ -309,14 +380,14 @@ Determine output path:
 
 Write the full verdict output to the file. Create intermediate directories as needed.
 
-When writing findings to the file, wrap each finding block with HTML comment markers so they can be extracted individually:
+When writing findings to the file, wrap each finding block with HTML comment markers so they can be extracted individually. Preserve the agent-local ID (e.g., `SEC:2`, `LOG:1`, `QUA:3`) in the heading so findings are searchable by ID:
 ```
 <!-- F:1 -->
-### 🔴 Correctness · `src/auth.ts:42`
+### LOG:1 — 🔴 Correctness · `src/auth.ts:42`
 ...finding content...
 
 <!-- F:2 -->
-### 🟡 Security · `src/api.ts:15`
+### SEC:2 — 🟡 Security · `src/api.ts:15`
 ...finding content...
 ```
 
@@ -377,4 +448,34 @@ Display: `Finding [N] copied ✓ — paste into your PR comment`
 Then prompt again (loop until empty input).
 
 **On empty input / Enter:** Exit the loop silently.
+
+## Known Issues Suggestion Hook
+
+After the copy loop exits, scan all findings in the review for language indicating accepted or deferred debt:
+
+**Trigger signals** (in finding text, task description, or PR description):
+- "known issue", "known limitation", "we know", "already known"
+- "accepted", "acceptable for now", "accepted debt", "acknowledged"
+- "workaround", "temporary fix", "deferred", "won't fix", "can't fix now"
+- "TODO", "FIXME", "tech debt", "legacy"
+
+For each finding that **matches a trigger signal but has no existing KI entry** (i.e., not already annotated `[Known Issue: KI-NNN]`):
+
+```
+> Finding [SEC:2] appears to be accepted/deferred debt ("workaround for legacy auth").
+> Add to docs/KNOWN_ISSUES.md as a known issue? (y/n)
+```
+
+On **yes**: append a new KI entry to `docs/KNOWN_ISSUES.md` with:
+- Auto-assigned next sequential ID (scan existing KI-NNN headings to determine next number)
+- Title from finding label
+- Scope from affected file
+- Reason left as `<fill in reason>` placeholder
+- Accepted by: `<fill in>`
+- Accepted on: today's date
+- Target fix: `<fill in>`
+
+Display: `KI-NNN added to docs/KNOWN_ISSUES.md — fill in Reason, Accepted by, and Target fix.`
+
+On **no**: skip silently. Only prompt once per matching finding.
 

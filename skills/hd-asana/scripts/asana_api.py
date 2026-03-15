@@ -5,10 +5,8 @@ Usage: python3 asana_api.py <command> [args]
 """
 
 import json
-import mimetypes
 import os
 import sys
-import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -152,55 +150,10 @@ def unassign_task(task_id):
     print(f"Task {task_id} unassigned")
 
 
-def add_comment(task_id, text, is_pinned=False):
-    """Add comment to task. Set is_pinned=True to pin the comment."""
-    data = {"text": text}
-    if is_pinned:
-        data["is_pinned"] = True
-    api_request(f"/tasks/{task_id}/stories", method="POST", data=data)
-    pin_status = " (pinned)" if is_pinned else ""
-    print(f"Comment added to task {task_id}{pin_status}")
-
-
-def upload_attachment(task_id, file_path):
-    """Upload file attachment to task."""
-    file_path = Path(file_path)
-    if not file_path.exists():
-        print(f"ERROR: File not found: {file_path}")
-        return None
-    
-    url = f"{ASANA_API_BASE}/tasks/{task_id}/attachments"
-    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex[:16]}"
-    
-    mime_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
-    
-    with open(file_path, "rb") as f:
-        file_data = f.read()
-    
-    body = b""
-    body += f"--{boundary}\r\n".encode()
-    body += f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode()
-    body += f"Content-Type: {mime_type}\r\n\r\n".encode()
-    body += file_data
-    body += f"\r\n--{boundary}--\r\n".encode()
-    
-    headers = {
-        "Authorization": f"Bearer {get_token()}",
-        "Content-Type": f"multipart/form-data; boundary={boundary}",
-    }
-    
-    req = Request(url, data=body, headers=headers, method="POST")
-    
-    try:
-        with urlopen(req) as response:
-            result = json.loads(response.read().decode())
-            attachment = result.get("data", {})
-            print(f"Uploaded: {file_path.name} (GID: {attachment.get('gid')})")
-            return attachment
-    except HTTPError as e:
-        error_body = e.read().decode()
-        print(f"Upload Error {e.code}: {error_body}")
-        return None
+def add_comment(task_id, text):
+    """Add comment to task."""
+    api_request(f"/tasks/{task_id}/stories", method="POST", data={"text": text})
+    print(f"Comment added to task {task_id}")
 
 
 def get_stories(task_id):
@@ -408,10 +361,6 @@ def main():
         unassign_task(args[0])
     elif cmd == "add-comment" and len(args) >= 2:
         add_comment(args[0], " ".join(args[1:]))
-    elif cmd == "add-pinned-comment" and len(args) >= 2:
-        add_comment(args[0], " ".join(args[1:]), is_pinned=True)
-    elif cmd == "upload-attachment" and len(args) >= 2:
-        upload_attachment(args[0], args[1])
     elif cmd == "get-stories" and len(args) >= 1:
         get_stories(args[0])
     elif cmd == "create-task" and len(args) >= 2:

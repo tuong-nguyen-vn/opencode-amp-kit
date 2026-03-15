@@ -1,12 +1,13 @@
-# Ballpark ETA Report Template
+# Ballpark ETA Report Template (Agent vs Human)
 
 ---
 
-# ETA: [Project Name]
+# ETA Comparison: [Project Name]
 
 **Date:** YYYY-MM-DD
 **Project:** [1-sentence description of what is being built]
 **Type:** Ballpark Estimate (for bidding)
+**Mode:** Agent-Assisted vs Human-Only Comparison
 
 ---
 
@@ -27,16 +28,16 @@
 
 ## Epic Breakdown
 
-| Epic | Task | Description | Platform | Estimate |
-|------|------|-------------|----------|----------|
-| E1: [Epic Name] | [Task 1] | [Brief description] | BE/FE/FS | Xh |
-| | [Task 2] | [Brief description] | BE/FE/FS | Xh |
-| | [Task 3] | [Brief description] | BE/FE/FS | Xh |
-| **E1 Total** | | | | **XX-XXh** |
-| E2: [Epic Name] | [Task 1] | [Brief description] | BE/FE/FS | Xh |
-| | [Task 2] | [Brief description] | BE/FE/FS | Xh |
-| **E2 Total** | | | | **XX-XXh** |
-| **GRAND TOTAL** | | | | **XX-XXh** |
+| Epic | Task | Description | Platform | Agent | Human Only |
+|------|------|-------------|----------|-------|------------|
+| E1: [Epic Name] | [Task 1] | [Brief description] | BE/FE/FS | Xh | XXh |
+| | [Task 2] | [Brief description] | BE/FE/FS | Xh | XXh |
+| | [Task 3] | [Brief description] | BE/FE/FS | Xh | XXh |
+| **E1 Total** | | | | **XX-XXh** | **XXX-XXXh** |
+| E2: [Epic Name] | [Task 1] | [Brief description] | BE/FE/FS | Xh | XXh |
+| | [Task 2] | [Brief description] | BE/FE/FS | Xh | XXh |
+| **E2 Total** | | | | **XX-XXh** | **XXX-XXXh** |
+| **GRAND TOTAL** | | | | **XX-XXh** | **XXX-XXXh** |
 
 **Platform/Role tags** *(examples — extend freely per project stack)*: BE, FE, FS · BE/.NET · BE/Node · BE/Python · FE/React · FE/Vue · Mobile/RN · Mobile/Flutter · DevOps · QA · PM
 
@@ -44,13 +45,13 @@
 
 ## Summary
 
-| Metric | Value |
-|--------|-------|
-| **Base Hours** | XX-XXh |
-| **Buffer (+20%)** | +X-Xh |
-| **Total Hours** | **XX-XXh** |
-| **Duration (1 dev)** | X-X weeks |
-| **Duration (2 devs)** | X-X weeks |
+| Metric | Agent-Assisted | Human-Only |
+|--------|----------------|------------|
+| **Base Hours** | XX-XXh | XXX-XXXh |
+| **Buffer (+20%)** | +X-Xh | +XX-XXh |
+| **Total Hours** | **XX-XXh** | **XXX-XXXh** |
+| **Duration (1 dev)** | X-X weeks | X-X weeks |
+| **Duration (2 devs)** | X-X weeks | X-X weeks |
 
 > Hours only — pricing calculated by sales based on these estimates.
 

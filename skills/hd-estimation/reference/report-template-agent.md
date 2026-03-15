@@ -1,4 +1,4 @@
-# Ballpark ETA Report Template
+# Ballpark ETA Report Template (Agent-Assisted)
 
 ---
 
@@ -7,6 +7,7 @@
 **Date:** YYYY-MM-DD
 **Project:** [1-sentence description of what is being built]
 **Type:** Ballpark Estimate (for bidding)
+**Mode:** Agent-Assisted Estimate
 
 ---
 
@@ -27,8 +28,8 @@
 
 ## Epic Breakdown
 
-| Epic | Task | Description | Platform | Estimate |
-|------|------|-------------|----------|----------|
+| Epic | Task | Description | Platform | Agent-Assisted |
+|------|------|-------------|----------|----------------|
 | E1: [Epic Name] | [Task 1] | [Brief description] | BE/FE/FS | Xh |
 | | [Task 2] | [Brief description] | BE/FE/FS | Xh |
 | | [Task 3] | [Brief description] | BE/FE/FS | Xh |
@@ -44,8 +45,8 @@
 
 ## Summary
 
-| Metric | Value |
-|--------|-------|
+| Metric | Agent-Assisted |
+|--------|----------------|
 | **Base Hours** | XX-XXh |
 | **Buffer (+20%)** | +X-Xh |
 | **Total Hours** | **XX-XXh** |

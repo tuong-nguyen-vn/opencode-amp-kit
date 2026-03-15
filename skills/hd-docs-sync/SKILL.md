@@ -16,15 +16,15 @@ Keeps project docs current by extracting knowledge from git history and workflow
 REQUEST → ASK → COLLECT → VERIFY → MAP → RECONCILE → APPLY → STANDARDS DELTA
 ```
 
-| Phase              | Action                                  | Tools                                          |
-| ------------------ | --------------------------------------- | ---------------------------------------------- |
-| 1. Ask             | Scope + start date from user            | (interactive)                                  |
-| 2. Collect         | git log + history/ (parallel)           | `Bash`, `Glob`, `Read`, `oracle`               |
-| 3. Verify          | Ground topics in code                   | `finder`                                       |
-| 4. Map             | Auto-detect target docs                 | `finder`                                       |
-| 5. Reconcile       | Topics vs code vs docs                  | `oracle`                                       |
-| 6. Apply           | Surgical updates                        | `Edit`, `Write`                                |
-| 7. Standards Delta | Compare base vs project standards; offer create or diff+suggest | `Read`, `Edit` / `Write` |
+| Phase              | Action                                  | Tools (Amp / Claude / hdcode)                                                          |
+| ------------------ | --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 1. Ask             | Scope + start date from user            | (interactive)                                                                            |
+| 2. Collect         | git log + history/ + plans/ + related repos (parallel) | `Bash`, `Glob`, `Read`, `oracle` (Amp/hdcode) / `Plan` subagent (Claude) |
+| 3. Verify          | Ground topics in code                   | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                 |
+| 4. Map             | Auto-detect target docs                 | `finder` (Amp/hdcode) / `Explore` subagent (Claude)                 |
+| 5. Reconcile       | Topics vs code vs docs                  | `oracle` (Amp/hdcode) / `Plan` subagent (Claude)                  |
+| 6. Apply           | Surgical updates                        | `edit_file` (Amp) / `Edit` (Claude/hdcode), `create_file` (Amp) / `Write` (Claude/hdcode) |
+| 7. Standards Delta | Compare base vs project standards; offer create or diff+suggest | `Read`, `AskUserQuestion`, `Edit` / `Write`                             |
 
 ## Phase 1: Ask
 
@@ -71,9 +71,64 @@ Extract from output:
 | `execution-plan.md` | What was planned |
 | `verification-report.md` | What was confirmed done (✅ = completed) |
 
+### Stream C — Plans Folder
+
+1. `Glob` all `plans/*/` folders
+2. Filter by date prefix >= start date
+3. `Read` any `.md` files found
+
+### Stream D — Related Repos Git History (conditional)
+
+**Check conditions first:**
+
+Read `additionalDirectories` from both `.claude/settings.json` and `.claude/settings.local.json`
+and merge into one flat list of paths.
+
+| AGENTS.md `## Related Projects` | `additionalDirectories` (merged) | Action |
+|----------------------------------|----------------------------------|--------|
+| ✅ present | ✅ has matching paths | Run git log for each matched path |
+| ✅ present | ❌ no matches found | **Warn user** (see below), skip Stream D |
+| ❌ missing | — | Silent skip |
+
+**Alias matching**: for each alias in `## Related Projects`, check if any path in
+`additionalDirectories` contains the alias as a directory name component
+(e.g., alias `project-b-api` matches `/some/path/project-b-api`).
+
+**Warning when Related Projects declared but no matching paths found:**
+
+```
+⚠️  Related Projects found in AGENTS.md but no matching paths in additionalDirectories.
+    Aliases declared: project-b-api, project-b-story-android
+    Stream D skipped — related repos git history will NOT be checked.
+
+    To fix: add to .claude/settings.json (committed, shared paths):
+    { "additionalDirectories": ["/path/to/project-b-api"] }
+
+    Or add to .claude/settings.local.json (gitignored, local paths):
+    { "additionalDirectories": ["/my/local/path/to/project-b-api"] }
+
+    See: /hd-help → Project Configuration Conventions → Multi-Repo Projects
+```
+
+Display this warning once, then continue with Streams A/B/C only.
+
+**When matches are found**, for each matched path:
+
+```bash
+git -C <resolved-path> log --since="<date>" --oneline --no-merges
+```
+
+Extract commit topics from the related repo. Label each with `[related: <alias>]`
+so downstream phases know the origin.
+
+**Why**: API changes in a related repo (e.g., renamed endpoint, changed request shape)
+can make the current repo's docs stale even when the current repo had no commits.
+
 ### Synthesis
 
-`oracle` clusters all streams into a unified topic list.
+`oracle` (Amp/hdcode) / `Plan` subagent (Claude) clusters all four streams into a unified topic list.
+Stream D topics carry `[related: <alias>]` labels. Reconcile phase should note when
+a topic originates from a related repo rather than the current repo.
 See `reference/collection-prompts.md` → **Stream Synthesis Prompt**.
 
 ## Phase 3: Verify Against Code
@@ -81,16 +136,16 @@ See `reference/collection-prompts.md` → **Stream Synthesis Prompt**.
 For each topic, confirm it exists in the codebase:
 
 ```
-finder: "Verify: '<topic claim>'"
+finder (Amp/hdcode) / Explore subagent (Claude): "Verify: '<topic claim>'"
 → Grep/glob for changed symbols, files, patterns
 ```
 
 | Claim | Verification |
 | ----- | ------------ |
-| "Added X" | `finder` "X" in codebase |
-| "Refactored Y" | `finder` current state of Y |
-| "Changed pattern" | `finder` for pattern usage |
-| "Updated config" | `finder` config file paths |
+| "Added X" | `finder` (Amp/hdcode) / `Explore` subagent (Claude) "X" in codebase |
+| "Refactored Y" | `finder` (Amp/hdcode) / `Explore` subagent (Claude) current state of Y |
+| "Changed pattern" | `finder` (Amp/hdcode) / `Explore` subagent (Claude) for pattern usage |
+| "Updated config" | `finder` (Amp/hdcode) / `Explore` subagent (Claude) config file paths |
 
 **Code is truth.** If not found: mark as `"planned"` or `"historical"` — do not document as current.
 
@@ -101,8 +156,8 @@ See `reference/collection-prompts.md` → **Code Verification Prompt**.
 Discover existing documentation before choosing targets:
 
 ```
-finder: "topic keyword in existing docs"
-finder: "AGENTS.md structure and sections"
+finder (Amp/hdcode) / Explore subagent (Claude): "topic keyword in existing docs"
+finder (Amp/hdcode) / Explore subagent (Claude): "AGENTS.md structure and sections"
 ```
 
 Use file-change signals from Stream A to auto-target:
@@ -119,6 +174,7 @@ Use file-change signals from Stream A to auto-target:
 | Troubleshooting insight | `docs/TROUBLESHOOTING.md` | — |
 | Auth / PII / payment / compliance changes | `SECURITY_STANDARDS.md` (suggest review only) | — |
 | Code style / patterns / convention changes | `docs/CODING_STANDARDS.md` — suggest review only | — |
+| Stack change (new language/framework added) | `docs/REVIEW_STANDARDS.md` — suggest updating `tech_stack` | — |
 
 > **CLAUDE.md**: This file is a short pointer to `AGENTS.md` and rarely needs updating. Only touch it if the project structure changes significantly (e.g., AGENTS.md is moved or renamed).
 >
@@ -133,11 +189,11 @@ See `reference/doc-mapping.md` for full conventions.
 
 ## Phase 5: Reconcile
 
-`oracle` compares three sources:
+`oracle` (Amp/hdcode) / `Plan` subagent (Claude) compares three sources:
 
 ```
 1. TOPICS: [verified topic list]
-2. CODE:   [current state from finder / Explore]
+2. CODE:   [current state from finder / Explore subagent]
 3. DOCS:   [existing doc content]
 ```
 
@@ -154,8 +210,8 @@ Read each target doc first, then edit:
 
 ```
 Read → understand structure, voice, existing sections
-Edit → surgical changes only (preserve style and tone)
-Write → only for brand-new doc files
+edit_file (Amp) / Edit (Claude/hdcode) → surgical changes only (preserve style and tone)
+create_file (Amp) / Write (Claude/hdcode) → only for brand-new doc files
 ```
 
 For multiple unrelated files: spawn parallel `Task` per file.
@@ -169,7 +225,7 @@ For multiple unrelated files: spawn parallel `Task` per file.
 ## Phase 7: Standards Delta Check
 
 Runs at end of every `hd-docs-sync` execution — after Phase 6, independent of topic detection.
-Checks both standards pairs. If no delta on either: silent.
+Checks all three standards pairs. If no delta on any: silent.
 
 ### Standards pairs
 
@@ -177,6 +233,8 @@ Checks both standards pairs. If no delta on either: silent.
 | ---------------- | -------------- |
 | `skills/hd-security-review/SECURITY_STANDARDS.md` | `docs/SECURITY_STANDARDS.md` |
 | `skills/hd-code-review/CODING_STANDARDS.md` | `docs/CODING_STANDARDS.md` |
+| `skills/hd-code-review/REVIEW_STANDARDS.md` | `docs/REVIEW_STANDARDS.md` |
+| `docs/KNOWN_ISSUES.md` (format template from `hd-docs-init`) | `docs/KNOWN_ISSUES.md` |
 
 For each pair, run Sub-flow A or B:
 
@@ -193,6 +251,8 @@ On **yes**: `Read` base file → extract the project override scaffold (schema s
 (blank `applicable_compliance` list + empty `project_rules` array, with inline comments).
 
 On **no**: skip silently.
+
+For `docs/KNOWN_ISSUES.md` specifically: scaffold the file with the KI entry format template + an empty KI entries section (no example entries).
 
 ### Sub-flow B: Project file exists → semantic diff + suggest
 
@@ -214,12 +274,19 @@ On approval: `Read` project file → `Edit` to append confirmed points under a
 
 Manual edit always allowed — developer may prefer to copy-paste directly.
 
+For `docs/KNOWN_ISSUES.md` specifically (Sub-flow B):
+- Parse all `## KI-NNN` headings and extract their `Target fix` dates.
+- Flag entries where `Target fix` date has passed → suggest resolving or updating the date.
+- Flag entries that still contain example placeholder text (e.g., "Example —") → remind dev to replace with real issues.
+
 ### Semantic parse rules
 
 | Standards file | Parse units as |
 | -------------- | -------------- |
 | `SECURITY_STANDARDS.md` | Section 3.x rule headings + Section 4 CRITICAL gate table rows |
 | `CODING_STANDARDS.md` | Section 2.x bullet-point groups (2.2, 2.3) + Section 3.x policy names |
+| `REVIEW_STANDARDS.md` | `tech_stack:` field + `reference/stacks/` preset names (Sub-flow A: offer create with auto-detected `tech_stack` pre-filled) |
+| `KNOWN_ISSUES.md` | `## KI-NNN` headings + `Target fix` date field per entry |
 
 Match criterion: project file contains the **section heading** (e.g. `3.9` or `Logging`) →
 consider that rule "present". No deep content comparison needed.
@@ -243,19 +310,20 @@ User: "Sync docs for the estimation enhancements from last 2 weeks"
 2. Collect (parallel):
    Git:     12 commits, touched skills/hd-estimation/**
    History: history/20260210-estimation-enhancements/ → 5 .md files read
+   Plans:   plans/20260210-*/ → no .md files found
 
-3. oracle synthesizes:
+3. oracle (Amp/hdcode) / Plan subagent (Claude) synthesizes:
    → Topic: "Dual-column estimation format" (status: completed ✅)
    → Topic: "Flexible pricing tiers" (status: completed ✅)
    → Topic: "Args parsing" (status: completed ✅)
 
 4. Verify:
-   finder "dual column estimation" → confirmed in SKILL.md L45
-   finder "pricing tiers"         → confirmed in reference/pricing.md
+   finder / Explore subagent "dual column estimation" → confirmed in SKILL.md L45
+   finder / Explore subagent "pricing tiers"         → confirmed in reference/pricing.md
 
 5. Map:
-   Git touched skills/hd-estimation/** → target: skills/hd-estimation/SKILL.md
-   finder "estimation in AGENTS.md" → section exists at L23
+   Git touched skills/hd-estimation/** → target: ~/.claude/skills/hd-estimation/SKILL.md
+   finder / Explore subagent "estimation in AGENTS.md" → section exists at L23
 
 6. Reconcile:
    GAPS:  pricing tiers not in AGENTS.md
@@ -264,23 +332,23 @@ User: "Sync docs for the estimation enhancements from last 2 weeks"
 
 7. Apply:
    Read AGENTS.md → note structure and voice
-   Edit estimation section → update format, add pricing tiers
+   edit_file / Edit estimation section → update format, add pricing tiers (all runtimes)
 ```
 
 ## Tool Quick Reference
 
-| Goal | Tool |
-| ---- | ---- |
-| Ask scope + date | (ask in response text, wait for reply) |
+| Goal | Tool (Amp / Claude / hdcode) |
+| ---- | ------------------------------ |
+| Ask scope + date | `AskUserQuestion` |
 | Git log / file changes | `Bash` |
 | List history/ entries | `Glob` |
 | Read history files | `Read` |
-| Verify topics in code | `finder` |
-| Find doc sections | `finder` |
-| Synthesize + reconcile | `oracle` |
-| Update existing docs | `Edit` |
-| Create new docs | `Write` |
-| Parallel file updates | `Task` |
+| Verify topics in code | `finder` (Amp/hdcode) / `Explore` subagent (Claude) |
+| Find doc sections | `finder` (Amp/hdcode) / `Explore` subagent (Claude) |
+| Synthesize + reconcile | `oracle` (Amp/hdcode) / `Plan` subagent (Claude) |
+| Update existing docs | `edit_file` (Amp) / `Edit` (Claude/hdcode) |
+| Create new docs | `create_file` (Amp) / `Write` (Claude/hdcode) |
+| Parallel file updates | `Task` (Amp/Claude) / sequential (Amp/hdcode) |
 
 ## Quality Checklist
 
@@ -294,6 +362,7 @@ User: "Sync docs for the estimation enhancements from last 2 weeks"
 - [ ] Terminology matches existing docs
 - [ ] Code-is-truth rule applied (planned ≠ implemented)
 - [ ] Standards delta check completed (create or diff+suggest for both pairs)
+- [ ] Related repos git history checked (Stream D — if Related Projects + additionalDirectories configured)
 ```
 
 ## Troubleshooting

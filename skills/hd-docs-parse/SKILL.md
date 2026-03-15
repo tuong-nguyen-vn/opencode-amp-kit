@@ -51,6 +51,7 @@ Parse the invocation:
 | `--metadata` | No | off | Include document metadata in output |
 | `--json` | No | — | Output as JSON (content + metadata) |
 | `--check` | No | — | Verify installation and dependencies |
+| `--cache` | No | off | Enable result caching (speeds up repeated extractions) |
 
 ### Natural Language Resolution
 
@@ -94,22 +95,11 @@ This checks:
 pip install kreuzberg
 
 # OCR support (optional — for scanned PDFs, images)
-# macOS:
-brew install tesseract
-# Debian/Ubuntu:
-# sudo apt-get install tesseract-ocr
-# Fedora/RHEL:
-# sudo dnf install tesseract
-
-pip install "kreuzberg[easyocr]" # alternative OCR backend (no system package needed)
+brew install tesseract          # macOS
+pip install "kreuzberg[easyocr]" # alternative OCR backend
 
 # Legacy Office formats (optional — for .doc, .ppt, .xls)
-# macOS:
 brew install --cask libreoffice
-# Debian/Ubuntu:
-# sudo apt-get install libreoffice
-# Fedora/RHEL:
-# sudo dnf install libreoffice
 ```
 
 ---
@@ -236,7 +226,7 @@ Chain `hd-docs-parse` with other skills for end-to-end workflows:
 |------------|-------|-------|
 | Max file size | System memory dependent | Large files (>500MB) may need chunking |
 | OCR accuracy | Depends on scan quality | 300 DPI+ recommended for scanned docs |
-| OCR languages | Tesseract language packs | Install additional packs via system package manager (e.g., `tesseract-lang` on macOS, `tesseract-ocr-<lang>` on Debian) |
+| OCR languages | Tesseract language packs | Install additional packs: `brew install tesseract-lang` |
 | Archive depth | Recursive | Nested archives extracted fully |
 | Legacy Office | Requires LibreOffice | `.doc`, `.ppt`, `.xls` need external converter |
 | Concurrent files | Sequential processing | Files processed one at a time |
@@ -251,8 +241,8 @@ The script prints clear error messages for common issues:
 |-------|---------|-----|
 | Missing file | "File not found: `<path>`" | Check file path |
 | Missing kreuzberg | Install instructions | `pip install kreuzberg` |
-| Missing OCR engine | Tesseract hint | Install via system package manager (e.g., `brew install tesseract`, `apt-get install tesseract-ocr`) |
-| Missing LibreOffice | LibreOffice hint | Install via system package manager (e.g., `brew install --cask libreoffice`, `apt-get install libreoffice`) |
+| Missing OCR engine | Tesseract hint | `brew install tesseract` |
+| Missing LibreOffice | LibreOffice hint | `brew install --cask libreoffice` |
 | Unsupported format | Lists supported formats | Check format table above |
 
 ---
@@ -289,4 +279,5 @@ The script prints clear error messages for common issues:
 /hd-docs-parse report.pdf --force-ocr             — force OCR on text PDF
 /hd-docs-parse report.pdf --metadata --json       — full metadata as JSON
 /hd-docs-parse --check                            — verify dependencies
+/hd-docs-parse report.pdf --cache                — enable caching for repeated extractions
 ```

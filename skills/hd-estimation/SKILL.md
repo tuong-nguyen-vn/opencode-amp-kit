@@ -1,9 +1,9 @@
 ---
 name: hd-estimation
-description: Create quick ballpark ETA reports for bidding with dual-column estimates (agent vs human). Use when estimating effort for new projects - focuses on solution approach and rough hours. Target < 33 minutes per estimate.
+description: Create quick ballpark ETA reports for bidding with agent-supported estimates by default, plus optional side-by-side human comparison. Use when estimating effort for new projects - focuses on solution approach and rough hours. Target < 33 minutes per estimate.
 license: proprietary
 metadata:
-  version: "4.0.0"
+  version: "4.5.2"
   copyright: "© HDWEBSOFT. All rights reserved."
 ---
 
@@ -13,14 +13,14 @@ Quick estimates to win bids. Solution-focused, not code-focused.
 
 ```
 GOAL: Ballpark estimate to WIN BIDS (< 33 min)
-MODE: Always dual-column — Agent-assisted vs Human-only
+MODE: Default = client-safe `eta.md` + transparent `eta-agent.md` + comparison `eta-agent-human.md`
 DO: Configure -> Input -> Research -> Solution -> ETA Table
 NOT: Detailed tasks, coding specs, exact hours, pricing
 ```
 
 ---
 
-## Workflow (4 Phases)
+## Workflow (5 Phases)
 
 ```
 Phase 0: Configuration (1-2 min)
@@ -28,13 +28,71 @@ Phase 0: Configuration (1-2 min)
 Phase 1: Collect & Extract (5-10 min)
     |
 Phase 2: Research & Solution (10-15 min)
+    |   includes: approach mode → single or variants
     |
-Phase 3: ETA Table (5-10 min)
+Phase 3: ETA Table (5-10 min per approach)
+    |
+Phase 4: Export (optional, 1-2 min)
+    |   export to DOCX/PDF for client delivery
 ```
 
 ---
 
 ## Phase 0: Configuration (1-2 min)
+
+### 0.1 Storage Intent (ask first)
+
+Always ask:
+
+```
+Where should I store this estimate?
+
+1. Current workspace — tied to this codebase/task
+2. General/client estimate — shared estimation storage
+
+Your choice (1-2): [2]
+```
+
+Set `$SCOPE`:
+- `workspace` for choice 1
+- `general` for choice 2
+
+### 0.2 Resolve Base Directory
+
+If `$SCOPE = workspace`:
+- `$BASE_DIR = <current working directory>`
+
+If `$SCOPE = general`:
+1. Check env `HD_HOME`
+2. Else check `hd_data_dir` in `~/.hd/config.yaml`
+3. If both are missing, run a friendly recovery prompt:
+
+```
+I couldn't find shared storage config (`HD_HOME` or `hd_data_dir`).
+How should we proceed?
+
+1. Use default `~/.hd` for now
+2. Enter a custom base folder for this run
+3. Set a permanent base folder in `~/.hd/config.yaml` (`hd_data_dir`)
+
+Your choice (1-3): [1]
+```
+
+- [1] → `$BASE_DIR = ~/.hd`
+- [2] → user provides path; validate writable; if invalid, re-prompt with suggested valid path
+- [3] → user provides path; write/merge `hd_data_dir` into `~/.hd/config.yaml`; then use it as `$BASE_DIR`
+
+After resolving, set:
+- `$PLANS_ROOT = $BASE_DIR/plans`
+- `$PLAN_DIR = $PLANS_ROOT/YYYYMMDD-<project-slug>`
+
+Show one confirmation line before continuing:
+
+```
+Saving this estimate to: $PLAN_DIR
+```
+
+### 0.3 Audience
 
 **If `--audience` arg provided:** Use it directly, skip prompt.
 
@@ -49,9 +107,9 @@ Who is this estimate for?
 Your choice (1-2): [2]
 ```
 
-**Save to `history/YYYYMMDD-<project-slug>/config.md`** using `reference/config-template.md`.
+**Save to `$PLAN_DIR/config.md`** using `reference/config-template.md`.
 
-**Reuse:** If `config.md` already exists in project folder, load it and skip prompt.
+**Reuse:** If `config.md` already exists in `$PLAN_DIR`, load it and skip prompt.
 
 ---
 
@@ -74,16 +132,18 @@ Reply "done" when finished.
 | Asset Type | Tool | Fallback |
 |------------|------|----------|
 | Image/Screenshot | `look_at` | — |
-| PDF | `look_at` | `skill("hd-docs-parse")` |
-| DOCX | `skill("hd-docs-parse")` | — |
+| PDF | `look_at` | `skill("pdf")` |
+| DOCX | `skill("docx")` | — |
 | Markdown/Text | `Read` | — |
-| URL | `mcp__exa__crawling_exa` | — |
+| URL | `read_web_page` | — |
 
-Copy assets to `history/YYYYMMDD-<project>/assets/`. Create `assets.md` registry.
+Copy assets to `$PLAN_DIR/assets/`. Create `assets.md` registry.
+
+If `$SCOPE = general`, still copy all referenced local assets (PDF/DOCX/images/etc.) into `$PLAN_DIR/assets/` so the estimate remains portable outside the current repository.
 
 ### 1.3 Create Context File
 
-Save extracted info to `history/YYYYMMDD-<project>/context.md`:
+Save extracted info to `$PLAN_DIR/context.md`:
 
 ```markdown
 # Context: <Project Name>
@@ -125,16 +185,272 @@ Save extracted info to `history/YYYYMMDD-<project>/context.md`:
 
 ### 2.2 Research
 
-| Need | Tool |
+| Need | Tool (Amp / Claude / hdcode) |
 |------|------|
-| Library docs | `mcp__exa__get_code_context_exa` |
-| Tech comparison | `mcp__exa__web_search_exa` |
-| Architecture advice | `oracle` |
-| Similar solutions | `mcp__exa__web_search_exa` |
+| Library docs | `Librarian` agent / `exa_get_code_context` |
+| Tech comparison | `web_search` |
+| Architecture advice | `oracle` (Amp/hdcode) / `Plan` subagent (Claude) |
+| Similar solutions | `web_search` |
 
-### 2.3 Solution Approach
+### 2.3 Variant Proposal + Mandatory Human Confirmation (HITL Gate)
 
-Save to `history/YYYYMMDD-<project>/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions.
+Before selecting approach mode, the AI must propose candidate variants first, then wait for explicit human confirmation.
+
+Required flow:
+
+1. AI proposes variant candidates (even when a single approach may be enough), each with:
+   - Display name
+   - 1-line approach summary
+   - Why/when to choose it
+   - Primary trade-off
+2. AI marks one option as a recommendation with rationale.
+3. AI asks the user to confirm one of these decisions:
+   - Proceed with a single selected variant
+   - Keep multiple variants for side-by-side estimation
+   - Request changes (add/remove/merge variants)
+4. Do not continue to Phase 2.4 or Phase 3 until explicit user confirmation is received.
+
+Mandatory prompt pattern:
+
+```
+Here are the proposed implementation variants:
+
+1. <Variant A> — <summary>
+2. <Variant B> — <summary>
+3. <Variant C> — <summary>
+
+Recommended: <Variant X> (<1-2 sentence rationale>)
+
+How should we proceed?
+1. Use one variant only (specify which)
+2. Keep multiple variants for comparison
+3. Revise variants first (tell me what to change)
+
+Reply with your choice. I will not continue until you confirm.
+```
+
+Set `$APPROACH_MODE` only after confirmation:
+- `single` when user confirms one variant only
+- `variants` when user confirms multiple variants
+
+**Rule:** Auto-detection may inform recommendations, but must never bypass the confirmation gate.
+
+### 2.4 Solution Approach (Post-Confirmation Only)
+
+**If `$APPROACH_MODE = single`:**
+
+Save to `$PLAN_DIR/solution.md` — stack table + architecture summary (2-3 sentences) + key decisions.
+
+**If `$APPROACH_MODE = variants`:**
+
+Generate only the user-confirmed variants (typically 2-3). For each confirmed variant, save to `$PLAN_DIR/solution-<variant-slug>.md`:
+
+```markdown
+# Solution: <Variant Display Name>
+
+## Approach Summary
+[2-3 sentences describing HOW this approach builds the system]
+
+## Tech Stack
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| **Backend** | [Technology] | [1 sentence] |
+| **Frontend** | [Technology] | [1 sentence] |
+| **Database** | [Technology] | [1 sentence] |
+| **Hosting** | [Platform] | [1 sentence] |
+
+## Best For
+- [scenario 1]
+- [scenario 2]
+
+## Not Ideal For
+- [scenario 1]
+- [scenario 2]
+
+## Trade-offs
+| Aspect | Assessment |
+|--------|------------|
+| **Delivery Speed** | Fast / Medium / Slow |
+| **Flexibility** | High / Medium / Low |
+| **Maintenance Burden** | Low / Medium / High |
+| **Initial Cost** | Low / Medium / High |
+| **Long-term Cost** | Low / Medium / High |
+
+## Key Risks
+- [risk 1]
+- [risk 2]
+```
+
+#### Variant Slug Naming Rules
+
+1. Generate lowercase kebab-case slug from approach name (e.g., "Custom Build" → `custom-build`, "WordPress" → `wordpress`, "Headless CMS" → `headless-cms`).
+2. Max 3 words in slug; truncate longer names to essential terms.
+3. No special characters except hyphen.
+4. If collision occurs, append numeric suffix: `-v2`, `-v3`.
+5. Store only confirmed variants in `$PLAN_DIR/variants.md`:
+
+```markdown
+# Approach Variants
+
+## Variants
+
+| # | Display Name | Slug | Recommended |
+|---|--------------|------|-------------|
+| 1 | <Variant A> | <variant-a-slug> | ★ / |
+| 2 | <Variant B> | <variant-b-slug> | ★ / |
+| 3 | <Variant C> | <variant-c-slug> | ★ / |
+
+## Assumptions and Constraints
+
+### Shared Assumptions
+- [assumption 1]
+- [assumption 2]
+
+### Hard Constraints
+- [constraint 1]
+- [constraint 2]
+
+### Out of Scope
+- [out-of-scope 1]
+- [out-of-scope 2]
+
+## Decision Criteria Weights
+
+| Criteria | Weight | Notes |
+|----------|--------|-------|
+| <Criteria 1> | <weight> | [notes] |
+| <Criteria 2> | <weight> | [notes] |
+| <Criteria 3> | <weight> | [notes] |
+| <Criteria 4> | <weight> | [notes] |
+| <Criteria 5> | <weight> | [notes] |
+
+## Effort Summary
+
+| Metric | <Variant A> | <Variant B> | <Variant C> |
+|--------|-------------|-------------|-------------|
+| **Base Hours** | <value> | <value> | <value> |
+| **Buffer (+20%)** | <value> | <value> | <value> |
+| **Total Hours** | **<value>** | **<value>** | **<value>** |
+| **Duration (<N> devs)** | <value> | <value> | <value> |
+| **...** | ... | ... | ... |
+
+First 3 rows (Base/Buffer/Total) are always present. Add duration rows dynamically based on likely team sizes for this project.
+
+## Feature and Capability Comparison
+
+| Criteria | <Variant A> | <Variant B> | <Variant C> |
+|----------|-------------|-------------|-------------|
+| **<criteria 1>** | [value] | [value] | [value] |
+| **<criteria 2>** | [value] | [value] | [value] |
+| **...** | ... | ... | ... |
+
+Generate rows dynamically based on what matters for this project. Use ✅/⚠️/❌ markers where helpful.
+
+## Pros and Cons by Variant
+
+### <Variant A>
+**Pros**
+- [pro 1]
+- [pro 2]
+- [pro 3]
+
+**Cons**
+- [con 1]
+- [con 2]
+- [con 3]
+
+### <Variant B>
+**Pros**
+- [pro 1]
+- [pro 2]
+- [pro 3]
+
+**Cons**
+- [con 1]
+- [con 2]
+- [con 3]
+
+### <Variant C>
+**Pros**
+- [pro 1]
+- [pro 2]
+- [pro 3]
+
+**Cons**
+- [con 1]
+- [con 2]
+- [con 3]
+
+## Risk Register and Mitigations
+
+| Risk | Variant(s) | Probability | Impact | Mitigation | Owner |
+|------|------------|-------------|--------|------------|-------|
+| [risk] | [variant] | Low/Med/High | Low/Med/High | [mitigation] | [owner] |
+
+## Operational Model Comparison
+
+| Operational Area | <Variant A> | <Variant B> | <Variant C> |
+|------------------|-------------|-------------|-------------|
+| <area 1> | [value] | [value] | [value] |
+| <area 2> | [value] | [value] | [value] |
+| **...** | ... | ... | ... |
+
+Generate rows dynamically based on the project's operational profile.
+
+## Recommendation Summary
+
+| | <Variant A> | <Variant B> | <Variant C> |
+|--|-------------|-------------|-------------|
+| **Best for** | [best fit] | [best fit] | [best fit] |
+| **Avoid if** | [avoid condition] | [avoid condition] | [avoid condition] |
+| **Risk level** | [level] | [level] | [level] |
+
+## Overall Verdict
+
+[2-4 paragraphs with the final recommendation and why it best matches the weighted criteria and hard constraints]
+
+## Confidence and Sensitivity
+
+| Item | Value |
+|------|-------|
+| Recommendation Confidence | High / Medium / Low |
+| Biggest Unknown | [unknown] |
+| If Unknown Changes | [delta impact on hours/risk] |
+
+## Final Decision Log
+
+| Field | Value |
+|-------|-------|
+| Selected Variant | [variant name] |
+| Decided By | [human name/role] |
+| Decision Date | [YYYY-MM-DD] |
+| Reason | [short rationale] |
+```
+
+Keep this template concise and generic. Do not copy domain-specific or client-specific option names into the skill spec.
+
+#### Variant Context Files (Optional)
+
+If a variant has **distinct assumptions, scope boundaries, or constraints** not shared by other variants, create `$PLAN_DIR/context-<variant-slug>.md`:
+
+```markdown
+# Context: <Variant Display Name>
+
+## Variant-Specific Assumptions
+- [assumption 1]
+- [assumption 2]
+
+## Scope Differences from Base
+- [difference 1]
+- [difference 2]
+
+## Constraints
+- [constraint 1]
+- [constraint 2]
+```
+
+**Rule:** Only create variant-specific context files when requirements diverge meaningfully. If differences are minor, document in `variants.md` instead.
 
 ---
 
@@ -211,38 +527,155 @@ Save to `history/YYYYMMDD-<project>/solution.md` — stack table + architecture 
 
 ### Generate Output
 
-Read `reference/report-template.md` for output format. Always dual-column (Agent | Human Only).
+Read report templates for output format.
 
-**Formula:**
+**If `$APPROACH_MODE = single`:**
+
+Generate three reports:
+1. `eta.md` — Primary estimate using `reference/report-template.md` (client-safe wording, no explicit agent label)
+2. `eta-agent.md` — Transparent agent-assisted estimate using `reference/report-template-agent.md`
+3. `eta-agent-human.md` — Side-by-side comparison using `reference/report-template-agent-human.md` (Agent | Human Only)
+
+Save to:
+- `$PLAN_DIR/eta.md`
+- `$PLAN_DIR/eta-agent.md`
+- `$PLAN_DIR/eta-agent-human.md`
+
+**If `$APPROACH_MODE = variants`:**
+
+For each variant in `variants.md`, generate a file family:
+
+| File | Purpose |
+|------|---------|
+| `eta-<slug>.md` | Client-safe estimate for this approach |
+| `eta-<slug>-agent-human.md` | Side-by-side agent vs human comparison |
+
+Example for 3 variants:
+- `eta-custom-build.md`, `eta-custom-build-agent-human.md`
+- `eta-wordpress.md`, `eta-wordpress-agent-human.md`
+- `eta-headless-cms.md`, `eta-headless-cms-agent-human.md`
+
+Additionally, generate `variants.md` using the full schema defined in Phase 2.4 (no abbreviated version).
+
+**Formula (applies to both single and variant modes):**
 ```
 Total = Sum(epic hours) × 1.2 (buffer)
 Duration = Total hours / 40h/week
 ```
 
-Save final report to `history/YYYYMMDD-<project>/eta.md`.
+---
+
+## Phase 4: Export (optional, confirmation required)
+
+After generating ETA files, propose export format variants and require explicit user confirmation before running export:
+
+```
+I can export using these delivery variants:
+
+1. Markdown only
+2. Markdown + DOCX
+3. Markdown + PDF
+4. Markdown + DOCX + PDF
+
+Recommended: <option + short rationale>
+
+Which variant should I execute?
+Reply with 1-4. I will wait for your confirmation before exporting.
+```
+
+### Export Process
+
+If and only if user confirms a choice > 1:
+
+1. Call `skill("hd-docs-export")` with:
+   - **Input files**:
+     - Single mode: `$PLAN_DIR/eta*.md`
+     - Variants mode: `$PLAN_DIR/eta-*.md` plus `$PLAN_DIR/variants.md`
+    - **Formats**: docx / pdf / docx,pdf based on choice
+    - **Output dir**: `$PLAN_DIR/exports/`
+    - **Manifest**: `$PLAN_DIR/exports.md`
+
+2. Handle export failures gracefully:
+   - If pandoc/PDF engine missing: warn user, keep `.md` files, show install hint
+   - Never block the estimation workflow
+
+3. Report export results:
+    ```
+    Exported 3 files to exports/:
+    - eta.docx ✓
+    - eta.pdf ✓
+    - variants.docx ✓
+    ```
+
+### Format-Aware Export
+
+| Choice | Formats | Required Tools |
+|--------|---------|----------------|
+| 1 | Markdown only | None |
+| 2 | DOCX | `pandoc` |
+| 3 | PDF | `pandoc` + PDF engine |
+| 4 | DOCX + PDF | `pandoc` + PDF engine |
+
+If a required tool is missing for one format, export remaining valid formats and report skipped artifacts.
 
 ---
 
 ## Output Files
 
+### Single approach mode
+
 | File | Purpose |
 |------|---------|
-| `history/YYYYMMDD-<project>/config.md` | Audience configuration |
-| `history/YYYYMMDD-<project>/assets.md` | Asset registry |
-| `history/YYYYMMDD-<project>/assets/` | Asset copies |
-| `history/YYYYMMDD-<project>/context.md` | Extracted requirements |
-| `history/YYYYMMDD-<project>/solution.md` | Tech stack + architecture |
-| `history/YYYYMMDD-<project>/eta.md` | Final ETA report |
+| `$PLAN_DIR/config.md` | Audience configuration |
+| `$PLAN_DIR/assets.md` | Asset registry |
+| `$PLAN_DIR/assets/` | Asset copies |
+| `$PLAN_DIR/context.md` | Extracted requirements |
+| `$PLAN_DIR/solution.md` | Tech stack + architecture |
+| `$PLAN_DIR/eta.md` | Final ETA report (client-safe wording) |
+| `$PLAN_DIR/eta-agent.md` | Transparent ETA report (explicitly agent-assisted) |
+| `$PLAN_DIR/eta-agent-human.md` | Side-by-side ETA report (agent vs human-only) |
+
+### Variants mode (additional/replacement files)
+
+| File | Purpose |
+|------|---------|
+| `$PLAN_DIR/variants.md` | Comparison index with recommendation |
+| `$PLAN_DIR/solution-<slug>.md` | Per-variant tech stack + architecture |
+| `$PLAN_DIR/context-<slug>.md` | *(optional)* Variant-specific assumptions/constraints |
+| `$PLAN_DIR/eta-<slug>.md` | Per-variant client-safe ETA |
+| `$PLAN_DIR/eta-<slug>-agent-human.md` | Per-variant side-by-side comparison |
+
+### Export artifacts (if Phase 4 triggered)
+
+| File | Purpose |
+|------|---------|
+| `$PLAN_DIR/exports/eta*.docx` | DOCX versions of ETA reports |
+| `$PLAN_DIR/exports/eta*.pdf` | PDF versions of ETA reports |
+| `$PLAN_DIR/exports/eta*.html` | HTML versions of ETA reports (if requested) |
+| `$PLAN_DIR/exports/variants.docx` | DOCX version of variants comparison (variants mode) |
+| `$PLAN_DIR/exports/variants.pdf` | PDF version of variants comparison (variants mode) |
+| `$PLAN_DIR/exports/variants.html` | HTML version of variants comparison (variants mode) |
+| `$PLAN_DIR/exports.md` | Export manifest listing all generated files |
 
 ---
 
 ## Reuse Context
 
 ```bash
-ls history/                                        # List existing projects
-Read history/YYYYMMDD-<project>/context.md         # Requirements
-Read history/YYYYMMDD-<project>/solution.md        # Tech decisions
-Read history/YYYYMMDD-<project>/eta.md             # Previous ETA
+# Single approach
+ls $PLANS_ROOT                                    # List existing projects
+Read $PLAN_DIR/context.md                         # Requirements
+Read $PLAN_DIR/solution.md                        # Tech decisions
+Read $PLAN_DIR/eta.md                             # Previous client-safe ETA
+Read $PLAN_DIR/eta-agent.md                       # Previous transparent agent-assisted ETA
+Read $PLAN_DIR/eta-agent-human.md                 # Previous side-by-side comparison ETA
+
+# Variants approach
+Read $PLAN_DIR/variants.md                        # Comparison index + recommendation
+Read $PLAN_DIR/solution-<slug>.md                 # Per-variant tech decisions
+Read $PLAN_DIR/context-<slug>.md                  # Per-variant assumptions (if exists)
+Read $PLAN_DIR/eta-<slug>.md                      # Per-variant client-safe ETA
+Read $PLAN_DIR/eta-<slug>-agent-human.md          # Per-variant side-by-side ETA
 ```
 
 ---

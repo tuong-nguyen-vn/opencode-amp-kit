@@ -149,11 +149,11 @@ Reproducible: Always / Sometimes / Rarely
 3. **Calls**: `<file>:<line>` - `<function>`
 4. **Fails at**: `<file>:<line>` - `<function>`
 
-### Traced with finder
+### Traced with finder / Explore subagent
 
 ```
-finder "function definition" → <findings>
-finder "function references" → <findings>
+finder / Explore subagent "function definition" → <findings>
+finder / Explore subagent "function references" → <findings>
 ```
 
 ## Recent Changes
@@ -321,7 +321,7 @@ The fix is correct if:
 
 ### Callers of Modified Code
 
-Found via `finder`:
+Found via finder / Explore subagent:
 
 | Caller       | File     | Risk         |
 | ------------ | -------- | ------------ |
@@ -397,13 +397,13 @@ Found via `finder`:
 
 ---
 
-## Fix Bead Template
+## Fix Plan Template
+
+Reference template for structuring the fix approach:
 
 ````markdown
 # Fix: <Issue Title>
 
-**Type**: bug
-**Priority**: <0-4>
 **Fixes**: <issue-id>
 
 ## Root Cause Summary
@@ -442,8 +442,8 @@ Found via `finder`:
 - [ ] Original symptom no longer reproducible
 - [ ] No new test failures in affected area
 - [ ] Full test suite passes
-- [ ] `bun run check-types` passes
-- [ ] `bun run build` passes
+- [ ] Type-check passes
+- [ ] Build passes
 
 ## Verification Steps
 
@@ -462,7 +462,3 @@ bun run check-types
 bun run build
 ```
 ````
-
-```
-
-```

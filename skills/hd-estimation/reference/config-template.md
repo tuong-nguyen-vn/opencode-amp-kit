@@ -1,13 +1,13 @@
 # Config: [Project Name]
 
 **Created:** YYYY-MM-DD
-**Estimation Skill Version:** 4.0.0
+**Estimation Skill Version:** 4.2.0
 
 ---
 
 ## Mode
 
-**Always:** Agent-assisted vs Human-only (dual-column)
+**Always:** Generate 3 outputs (client-safe, agent, agent-vs-human)
 
 ---
 
@@ -23,7 +23,7 @@
 
 | Parameter | Value |
 |-----------|-------|
-| Mode | both (agent vs human) |
+| Mode | triple-output (eta + eta-agent + eta-agent-human) |
 | Audience | [internal/client] |
 
 ---

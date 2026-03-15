@@ -15,6 +15,7 @@
 | Migration       | `docs/MIGRATION.md`                       |
 | Skills/workflow | Relevant `claude/skills/*/SKILL.md`       |
 | Release notes   | `CHANGELOG.md`                            |
+| Review standards | `docs/REVIEW_STANDARDS.md`              |
 
 ## By Change Type
 

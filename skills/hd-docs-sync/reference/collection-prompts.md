@@ -4,7 +4,7 @@ Prompt templates for Phase 2 (Collect) and Phase 5 (Reconcile) in hd-docs-sync.
 
 ---
 
-## Stream Synthesis Prompt (oracle)
+## Stream Synthesis Prompt (oracle (Amp) / Plan subagent (Claude))
 
 Use after collecting all three streams. Paste raw content from each.
 
@@ -18,7 +18,10 @@ CHANGED FILES:
 <paste: git log --since=<date> --name-only --no-merges --pretty=format:"" output>
 
 HISTORY ENTRIES:
-<paste: contents of all history/*.md files in range, or "none">
+<paste: contents of all history/*.md files in range>
+
+PLANS:
+<paste: contents of plans/*.md files in range, or "none">
 
 Rules:
 - Cluster related items into named topics
@@ -45,7 +48,7 @@ Be precise. Only include what is explicitly evidenced in the sources.
 
 ---
 
-## Code Verification Prompt (finder)
+## Code Verification Prompt (finder (Amp) / Explore subagent (Claude))
 
 Use in Phase 3. One prompt per topic.
 
@@ -67,7 +70,7 @@ Output:
 
 ---
 
-## Reconciliation Prompt (oracle)
+## Reconciliation Prompt (oracle (Amp) / Plan subagent (Claude))
 
 Use in Phase 5. Input is the verified topic list + current doc contents.
 

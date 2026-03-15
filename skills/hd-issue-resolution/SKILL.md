@@ -8,14 +8,18 @@ metadata:
 
 # Issue Resolution Pipeline
 
-Systematically resolve issues through iterative diagnosis and verified fixes.
+Systematically resolve issues through iterative diagnosis and verified fixes. A single agent runs the entire pipeline — no team creation or worker spawning needed.
+
+> **User Confirmation Gates:**
+> - **Gate 1 (after Phase 2)** — User confirms root cause and approves fix approach before implementation.
+> - **Gate 2 (after Phase 3)** — User confirms blast radius and approves proceeding with fix.
 
 ## Pipeline Overview
 
 ```
-INPUT → Triage → Reproduction → Root Cause Analysis → Impact → Fix → Verify
-              ◄──────────────►◄────────────────────►
-                    (Iterative loops allowed)
+INPUT → Triage → Reproduction → Root Cause Analysis → [Gate 1: Confirm RCA] → Impact → [Gate 2: Approve Fix] → Fix → Verify
+                ◄──────────────►◄────────────────────►
+                      (Iterative loops allowed)
 ```
 
 | Phase                  | Purpose                            | Output              |
@@ -24,7 +28,7 @@ INPUT → Triage → Reproduction → Root Cause Analysis → Impact → Fix →
 | 1. Reproduction        | Prove the bug, trace code path     | Repro Report + Test |
 | 2. Root Cause Analysis | Find WHY, not just WHERE           | RCA Report          |
 | 3. Impact Assessment   | Blast radius, regression risk      | Impact Report       |
-| 4. Fix Decomposition   | Break into beads                   | .beads/\*.md        |
+| 4. Fix                 | Implement the fix                  | Code changes        |
 | 5. Verification        | Prove fix works, no regressions    | Passing tests       |
 
 ## Phase 0: Triage
@@ -41,6 +45,8 @@ Normalize different input types to a structured Issue Brief.
 
 ### Vague Report Triage
 
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available for clarification questions.
+
 ```
 User: "Login is broken"
          │
@@ -53,7 +59,7 @@ Ask clarification questions:
          │
          ▼ (if user can't clarify)
 Explore:
-• `finder`: Find auth/login related code
+• finder / Explore subagent: Find auth/login related code
 • git log: Recent changes in area
 • Check logs if available
 ```
@@ -63,7 +69,7 @@ Explore:
 ```
 Parse the stack trace:
 • Extract file:line locations
-• `finder` on functions in trace
+• finder / Explore subagent on functions in trace
 • Understand surrounding context
          │
          ▼
@@ -76,14 +82,14 @@ Identify reproduction conditions:
 
 ```
 Run test in isolation:
-• Run the project's test command (detect from package.json, Makefile, or AGENTS.md)
+• bun test <file> --filter "<test name>"
 • Understand test setup/assertions
 • Check git log: was it passing before?
          │
          ▼
 Trace implementation:
 • What code does test exercise?
-• `finder` on tested function
+• finder / Explore subagent on tested function
 • Recent changes to implementation?
 ```
 
@@ -163,9 +169,9 @@ Prove the bug exists and trace the code path.
 ### Code Path Tracing
 
 ```
-finder → Find where error originates, find callers
-git blame <file>       → Who changed it, when
-git log -p <file>      → What changed recently
+finder / Explore subagent → Find where error originates, find callers
+git blame <file>           → Who changed it, when
+git log -p <file>          → What changed recently
 ```
 
 ### Repro Report Template
@@ -224,12 +230,27 @@ STEP 4: Confirm root cause
 | **Data corruption** | Trace state changes       | Data flow analysis              |
 | **External dep**    | Check version/API changes | Changelogs, API docs            |
 
-### `oracle` for RCA
+### oracle (Amp/hdcode) / Plan subagent (Claude) for RCA
 
 **Hypothesis Generation:**
 
 ```
+# Amp / hdcode
 oracle(
+  task: "Generate root cause hypotheses",
+  context: """
+    Symptom: <error>
+    Code path: <trace>
+    Recent changes: <git log>
+
+    Generate 3-5 hypotheses ranked by likelihood.
+    For each, what evidence would support/refute it?
+  """,
+  files: ["<affected files>"]
+)
+
+# Claude
+Plan(
   task: "Generate root cause hypotheses",
   context: """
     Symptom: <error>
@@ -246,7 +267,22 @@ oracle(
 **Hypothesis Validation:**
 
 ```
+# Amp / hdcode
 oracle(
+  task: "Validate root cause hypothesis",
+  context: """
+    Hypothesis: <proposed cause>
+    Evidence: <gathered evidence>
+
+    1. Does evidence support or refute?
+    2. Explain causal chain: cause → symptom
+    3. What would confirm this?
+  """,
+  files: ["<relevant files>"]
+)
+
+# Claude
+Plan(
   task: "Validate root cause hypothesis",
   context: """
     Hypothesis: <proposed cause>
@@ -317,6 +353,30 @@ Save to `history/issues/<id>/rca.md`:
 **Preventive**: <How to prevent similar bugs>
 ```
 
+### Gate 1: Confirm Root Cause & Fix Approach
+
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available to present options as structured choices.
+
+Present the RCA findings and proposed fix for user approval:
+
+```markdown
+## Root Cause Confirmed
+
+**Cause**: <clear statement>
+**Causal chain**: <brief chain>
+**Proposed fix**: <what to change>
+**Alternative approaches**: <if any>
+
+Reply with one:
+1. **approve** — proceed with this fix approach
+2. **revise** — <feedback on root cause or fix approach>
+3. **stop** — end investigation here
+```
+
+- **approve** → Continue to Phase 3 (Impact Assessment)
+- **revise** → Back to Phase 2 with new direction, or adjust fix approach
+- **stop** → Save RCA report as deliverable, no fix applied
+
 ## Phase 3: Impact Assessment
 
 Before fixing, understand blast radius.
@@ -324,7 +384,7 @@ Before fixing, understand blast radius.
 ### Impact Analysis
 
 ```
-finder <affected function>
+finder / Explore subagent <affected function>
     → Who else calls this?
     → Similar code that might have same bug?
 
@@ -344,13 +404,12 @@ Review test coverage
 
 ### Spike for Complex Fixes
 
-If fix approach is uncertain:
+If fix approach is uncertain, run a quick spike directly:
 
-```bash
-br create "Spike: Validate fix approach for <issue>" -t task -p 0
-```
-
-Execute via `Task` tool, write to `.spikes/<issue-id>/`.
+1. Create throwaway code in `.spikes/<issue-id>/`
+2. Validate the approach works
+3. Document learnings
+4. Delete spike code after confirming approach
 
 ### Impact Report Template
 
@@ -367,7 +426,7 @@ Save to `history/issues/<id>/impact.md`:
 
 ### Callers Affected
 
-- <List from `finder`>
+- <List from finder / Explore subagent>
 
 ### Related Code
 
@@ -389,62 +448,54 @@ Save to `history/issues/<id>/impact.md`:
 ☐ Fix approach validated
 ```
 
-## Phase 4: Fix Decomposition
+### Gate 2: Approve Fix
 
-Break fix into beads.
+> **Tool hint**: Use `question` / `AskUserQuestion` tool if available to present options as structured choices.
 
-### Simple Fix (Single Bead)
-
-```bash
-br create "Fix: <issue title>" -t bug -p <priority>
-```
-
-Bead includes:
-
-- Root cause reference
-- Fix implementation
-- Test (failing → passing)
-- Docs update (if behavior change)
-
-### Complex Fix (Multiple Beads)
-
-```bash
-br create "Epic: Fix <issue>" -t epic -p <priority>
-br create "Add regression test for <issue>" -t task --blocks <epic>
-br create "Fix <component A>" -t bug --blocks <epic> --deps <test>
-br create "Fix <component B>" -t bug --blocks <epic> --deps <test>
-br create "Update docs for <behavior change>" -t task --blocks <epic> --deps <fix-a>,<fix-b>
-```
-
-### Fix Bead Template
+Present the impact assessment for user approval before implementing the fix:
 
 ```markdown
-# Fix: <Issue Title>
+## Impact Assessment Complete
 
-**Type**: bug
-**Priority**: <0-4>
-**Fixes**: <issue reference>
+**Blast radius**: <N files directly, M callers affected>
+**Regression risk**: HIGH / MEDIUM / LOW
+**Fix approach**: <brief description>
+**Files to modify**: <list>
+**Tests to add**: <list>
 
-## Root Cause
-
-<From RCA report>
-
-## Fix Implementation
-
-<What to change and why>
-
-## Files to Modify
-
-- `<file>`: <change description>
-
-## Acceptance Criteria
-
-- [ ] Regression test passes
-- [ ] Original symptom no longer reproducible
-- [ ] No new test failures
-- [ ] Type check passes (use project's type-check command from AGENTS.md or package.json)
-- [ ] Build passes (use project's build command from AGENTS.md or package.json)
+Reply with one:
+1. **approve** — proceed with fix implementation
+2. **revise** — <feedback on approach or scope>
+3. **stop** — save assessment, do not fix
 ```
+
+- **approve** → Continue to Phase 4 (Fix)
+- **revise** → Adjust fix approach or scope, back to Phase 3
+- **stop** → Save impact report as deliverable, no fix applied
+
+## Phase 4: Fix
+
+Implement the fix directly. The agent handles all code changes.
+
+### Simple Fix
+
+1. Write/update regression test (failing → will pass after fix)
+2. Implement the fix
+3. Run type-check + build from AGENTS.md ## Worker Config
+
+### Complex Fix (Multiple Files)
+
+1. Write regression tests first
+2. Fix each affected file
+3. Run type-check + build after each significant change
+4. If related code has the same bug pattern, fix those too (from Impact Assessment)
+
+### What to Include
+
+- **Regression test** — test that fails before fix, passes after
+- **The fix itself** — minimal change that addresses root cause
+- **Related fixes** — same bug pattern in other files (from Impact Assessment)
+- **Docs update** — if behavior change affects documentation
 
 ## Phase 5: Verification
 
@@ -452,22 +503,19 @@ Prove fix works and nothing else broke.
 
 ### Verification Checklist
 
-> **Detect the project's test/build commands** from `AGENTS.md`, `package.json`, `Makefile`, `Cargo.toml`, or `go.mod`.
-> Do NOT assume a specific runtime (bun, npm, yarn, etc.) — use whatever the project uses.
-
 ```bash
 # 1. Regression test passes
-<project test command> <regression-test-file>
+bun test <regression-test-file>
 
 # 2. Original symptom gone
 <manual verification or test>
 
 # 3. No new failures
-<project test command>
+bun run test
 
 # 4. Types and build
-<project type-check command>
-<project build command>
+bun run check-types
+bun run build
 ```
 
 ### Iteration: Verify → RCA Loop
@@ -511,7 +559,7 @@ Prevent infinite iteration:
 | ------------ | ---------- | ---------- | --------------------------- |
 | RCA → Repro  | 2          | 4          | Escalate / pair debug       |
 | RCA → Triage | 1          | 2          | Re-evaluate original report |
-| Verify → RCA | 2          | 3          | `oracle` deep review |
+| Verify → RCA | 2          | 3          | `oracle` (Amp/hdcode) / `Plan` subagent (Claude) deep review |
 
 ## Optional: Task Finalize Hook
 
@@ -522,20 +570,41 @@ If a Linear task URL was provided at the start of this session:
 
 Skip this step if no task URL is in context, or if the task was already updated.
 
+## Known Issues Suggestion Hook
+
+After resolution, check if the fix involved accepting or deferring the underlying issue rather than fully resolving it.
+
+**Trigger signals** (in fix summary, root cause, or verification notes):
+- "workaround", "temporary fix", "partial fix", "deferred", "can't fix now", "won't fix"
+- "known limitation", "accepted", "acknowledged", "expected behavior"
+- "TODO", "FIXME", "tech debt", "legacy constraint"
+
+If any trigger signal is present and no matching KI entry exists in `docs/KNOWN_ISSUES.md`:
+
+```
+> This resolution appears to involve accepted/deferred debt: "<matched phrase>".
+> Add to docs/KNOWN_ISSUES.md as a known issue? (y/n)
+```
+
+On **yes**: append a new KI entry with auto-assigned next sequential ID, title from the issue summary, scope from affected files, today's date, and `<fill in>` placeholders for Reason, Accepted-by, and Target-fix. Display: `KI-NNN added — fill in the remaining fields.`
+
+On **no**: skip silently.
+
 ---
 
 ## Quick Reference
 
 ### Tool Selection
 
-| Need                  | Tool                                                  |
-| --------------------- | ----------------------------------------------------- |
-| Parse stack trace     | `finder`          |
-| Find callers          | `finder`          |
-| Recent changes        | git log, git blame                                    |
-| Binary search commits | git bisect                                            |
-| Reasoning about cause | `oracle`             |
-| Validate fix approach | Spike via `Task` tool                        |
+| Need                  | Tool                                                                     |
+| --------------------- | ------------------------------------------------------------------------ |
+| Parse stack trace     | `finder` (Amp/hdcode) / `Explore` subagent (Claude)   |
+| Find callers          | `finder` (Amp/hdcode) / `Explore` subagent (Claude)   |
+| Recent changes        | git log, git blame                                                       |
+| Binary search commits | git bisect                                                               |
+| Reasoning about cause | `oracle` (Amp/hdcode) / `Plan` subagent (Claude)                       |
+| Validate fix approach | Spike in `.spikes/<issue-id>/` (agent runs directly)                     |
+| User interaction      | `question` / `AskUserQuestion` tool if available                         |
 
 ### Common Mistakes
 
@@ -544,3 +613,5 @@ Skip this step if no task URL is in context, or if the task was already updated.
 - **No regression test** → Bug returns later
 - **Ignoring impact** → Fix breaks other things
 - **Not iterating** → Wrong diagnosis persists
+- **Skipping Gate 1** → Fix wrong root cause, wasted effort
+- **Skipping Gate 2** → Underestimate blast radius, regressions

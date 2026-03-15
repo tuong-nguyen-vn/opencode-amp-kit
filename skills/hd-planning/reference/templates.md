@@ -194,16 +194,11 @@ Parallelizable: Domain + Schema can run in parallel
 
 ---
 
-## Spike Bead Template
+## Spike Task Template
 
-````markdown
-# Spike: <Specific Question>
+Used as the `description` parameter when calling `task_create` for a spike task:
 
-**Type**: spike
-**Priority**: 0
-**Time-box**: 30 minutes
-**Output**: `.spikes/<feature>/<spike-id>/`
-
+```markdown
 ## Question
 
 Can we <specific, answerable technical question>?
@@ -211,6 +206,14 @@ Can we <specific, answerable technical question>?
 ## Background
 
 <Why this needs investigation before main implementation>
+
+## Time-box
+
+30 minutes
+
+## Output
+
+`.spikes/<feature>/<spike-name>/`
 
 ## Approach
 
@@ -222,25 +225,23 @@ Can we <specific, answerable technical question>?
 
 - [ ] Working throwaway code exists in `.spikes/`
 - [ ] Answer documented: YES (with approach) or NO (with blocker)
-- [ ] Learnings captured for embedding in main plan beads
+- [ ] Learnings captured for embedding in main plan tasks
 
 ## On Completion
 
-```bash
-# If successful:
-br close <id> --reason "YES: <working approach summary>"
-
-# If blocked:
-br close <id> --reason "NO: <blocker>. Alternative: <suggestion>"
+Update task via:
+task_update(teamName, taskId, status="completed",
+  description="YES: <working approach summary>"
+  -- or --
+  description="NO: <blocker>. Alternative: <suggestion>")
 ```
-````
 
 ## Learnings Template
 
-After completion, document:
+After spike completion, document in `.spikes/<feature>/<spike-name>/learnings.md`:
 
 ```markdown
-## Learnings from Spike <id>
+## Learnings from Spike: <spike name>
 
 ### What Worked
 
@@ -254,37 +255,31 @@ After completion, document:
 
 ### Recommended Approach
 
-<Summary for main plan bead>
+<Summary to embed in main plan task>
 
 ### Reference Code
 
-See `.spikes/<feature>/<spike-id>/` for working example.
+See `.spikes/<feature>/<spike-name>/` for working example.
 ```
-
-````
 
 ---
 
-## Feature Bead with Embedded Learnings
+## Feature Task Template
+
+Used as the `description` parameter when calling `task_create` for a feature task:
 
 ```markdown
-# <Action-oriented title>
-
-**Type**: task
-**Priority**: <0-4>
-**Depends on**: bd-X, bd-Y
-
 ## Context
 
 <Brief context on where this fits in the feature>
 
 ## Learnings from Spikes
 
-> From spike bd-<id>:
+> From spike "<spike name>":
 > - <Key learning 1>
 > - <Key learning 2>
 >
-> Reference: `.spikes/<feature>/<spike-id>/`
+> Reference: `.spikes/<feature>/<spike-name>/`
 
 ## Requirements
 
@@ -301,12 +296,15 @@ See `.spikes/<feature>/<spike-id>/` for working example.
 - [ ] <Criterion 1>
 - [ ] <Criterion 2>
 - [ ] <Criterion 3>
-- [ ] Passes `bun run check-types`
-- [ ] Passes `bun run build`
+- [ ] Passes type-check
+- [ ] Passes build
+```
 
-## File Scope
+The `metadata` parameter should include:
 
-Files this bead will touch (for track assignment):
-- `packages/domain/src/entities/<name>.ts`
-- `packages/infrastructure/src/db/<name>-repository.ts`
-````
+```json
+{
+  "priority": 2,
+  "fileScope": "packages/domain/src/entities/**"
+}
+```

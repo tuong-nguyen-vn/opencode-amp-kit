@@ -17,7 +17,7 @@ tech_stack: ~
 #   tech_stack: dotnet             ← force single stack
 #   tech_stack: [dotnet, nodejs]   ← force multiple stacks
 #
-# Available presets: dotnet | nodejs | react | reactnative | expo | vuejs | python | django | go | flutter | php | laravel | cakephp | wordpress | scala
+# Available presets: dotnet | nodejs | react | reactnative | expo | vuejs | python | django | go | flutter | php | laravel | cakephp | wordpress | scala | apex | lwc | aura | visualforce
 # (Add more by creating reference/stacks/<name>.md following the existing preset format)
 ```
 
@@ -40,7 +40,25 @@ aspect_escalations: []
 
 ---
 
-## 3. Custom Aspects
+## 3. Remote URL
+
+```yaml
+remote_url: ~
+# Optional. Override the auto-detected git remote URL for generating platform links in findings.
+# Use when the auto-detected remote is wrong, the remote is self-hosted, or git remote is unavailable.
+#
+# Set to the repo's blob base URL — the skill will append /<branch>/<file>#L<line> automatically.
+# Examples:
+#   remote_url: "https://github.com/myorg/myrepo"
+#   remote_url: "https://gitlab.mycompany.com/myorg/myrepo"
+#   remote_url: "https://bitbucket.org/myorg/myrepo"
+#
+# Leave as ~ to use auto-detection from `git remote get-url origin`.
+```
+
+---
+
+## 4. Custom Aspects
 
 ```yaml
 custom_aspects: []

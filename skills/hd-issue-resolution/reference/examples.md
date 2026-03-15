@@ -146,11 +146,31 @@ Add null check before accessing user properties, or revert to throwing behavior.
 
 ---
 
+### Gate 1: Confirm Root Cause
+
+```markdown
+## Root Cause Confirmed
+
+**Cause**: Commit abc123 changed `findUserOrThrow` to `findUser`, which returns
+`undefined` instead of throwing. Caller assumes user is always defined.
+**Proposed fix**: Add null check in all callers of `findUser`, or revert to throwing behavior.
+**Alternative**: Revert the refactor commit entirely.
+
+Reply with one:
+1. **approve** — proceed with null check fix
+2. **revise** — <feedback>
+3. **stop** — end here
+```
+
+**User says: approve**
+
+---
+
 ### Phase 3: Impact Assessment
 
 ```bash
 # Check who else uses findUser
-finder "findUser references"
+finder / Explore subagent "findUser references"
 # Found 5 other callers - all might have same bug!
 ```
 
@@ -170,26 +190,35 @@ finder "findUser references"
 Need to fix 3 files, all internal use cases
 ```
 
+### Gate 2: Approve Fix
+
+```markdown
+## Impact Assessment Complete
+
+**Blast radius**: 3 files need same fix
+**Regression risk**: MEDIUM
+**Fix approach**: Add null check before accessing user properties in 3 files
+**Tests to add**: Regression tests for each affected use case
+
+Reply with one:
+1. **approve** — proceed with fix
+2. **revise** — <feedback>
+3. **stop** — save assessment, do not fix
+```
+
+**User says: approve**
+
 ---
 
-### Phase 4: Fix Decomposition
+### Phase 4: Fix
 
-```bash
-br create "Epic: Fix user lookup null handling" -t epic -p 0
-# → bd-100
+Agent implements directly:
 
-br create "Add regression tests for user lookup edge cases" -t task --blocks bd-100
-# → bd-101
-
-br create "Fix null handling in get-user.ts" -t bug --blocks bd-100 --deps bd-101
-# → bd-102
-
-br create "Fix null handling in update-user.ts" -t bug --blocks bd-100 --deps bd-101
-# → bd-103
-
-br create "Fix null handling in delete-user.ts" -t bug --blocks bd-100 --deps bd-101
-# → bd-104
-```
+1. **Add regression tests** for all 3 affected use cases
+2. **Fix get-user.ts** — add null check
+3. **Fix update-user.ts** — add null check
+4. **Fix delete-user.ts** — add null check
+5. Run type-check + build after each file
 
 ---
 
@@ -277,7 +306,7 @@ it('should accept unicode characters in username', () => {
 **Trace**:
 
 ```bash
-finder "validateUsername definition"
+finder / Explore subagent "validateUsername definition"
 # Found: packages/domain/src/validation/username.ts
 
 Read packages/domain/src/validation/username.ts
@@ -293,26 +322,36 @@ Read packages/domain/src/validation/username.ts
 
 **No iteration needed** - cause is obvious from code inspection.
 
+### Gate 1: Confirm Root Cause (Simple — inline confirmation)
+
+Root cause obvious, fix straightforward → agent presents briefly:
+
+> **Root cause**: Regex `/^[a-zA-Z0-9_]+$/` excludes unicode. **Fix**: Change to `/^[\p{L}\p{N}_]+$/u`. **Risk**: LOW. Proceed? (approve/stop)
+
+**User says: approve**
+
 ---
 
 ### Phase 3: Impact Assessment
 
 ```bash
-finder "validateUsername references"
+finder / Explore subagent "validateUsername references"
 # Used in: signup, profile-update
 ```
 
 **Regression Risk**: LOW - expanding validation is additive.
 
+### Gate 2: Approve Fix (Simple — inline confirmation)
+
+> **Blast radius**: 1 file, 2 callers. **Risk**: LOW. Proceed with fix? (approve/stop)
+
+**User says: approve**
+
 ---
 
-### Phase 4: Fix Decomposition
+### Phase 4: Fix
 
-Single bead (simple fix):
-
-```bash
-br create "Fix: Allow unicode in username validation" -t bug -p 2
-```
+Agent implements directly:
 
 **Fix**:
 
@@ -401,7 +440,7 @@ console.log(`[${Date.now()}] Order not found, creating`)
 **Plan Analysis**:
 
 ```
-# Amp
+# Amp / hdcode
 oracle(
   task: "Analyze race condition in order creation",
   context: """
@@ -433,29 +472,62 @@ Plan(
 - Request A creates order
 - Request B creates order (duplicate!)
 
+### Gate 1: Confirm Root Cause
+
+```markdown
+## Root Cause Confirmed
+
+**Cause**: TOCTOU race — check-then-create allows concurrent requests to both see "not found".
+**Fix options**:
+1. Database unique constraint (let DB handle it)
+2. Distributed lock (complex)
+3. Upsert instead of check-then-insert (recommended)
+
+**Proposed fix**: Option 3 — upsert. Need quick spike to validate.
+
+Reply with one:
+1. **approve** — proceed with upsert approach (run spike first)
+2. **revise** — <feedback>
+3. **stop** — end here
+```
+
+**User says: approve**
+
 ---
 
 ### Phase 3: Impact Assessment
 
-**Fix Options**:
+**Spike**: Agent runs quick spike directly in `.spikes/duplicate-orders/`:
 
-1. Database unique constraint (let DB handle it)
-2. Distributed lock (complex)
-3. Upsert instead of check-then-insert
-
-**Spike**: Test upsert approach
-
-```bash
-br create "Spike: Test upsert for order creation" -t task -p 0
 ```
+1. Write throwaway upsert code
+2. Run stress test against it
+3. Confirm: upsert prevents duplicates ✓
+4. Clean up spike code
+```
+
+### Gate 2: Approve Fix
+
+```markdown
+## Impact Assessment Complete
+
+**Blast radius**: 1 file (create-order.ts)
+**Regression risk**: LOW (upsert is drop-in replacement)
+**Spike validated**: Upsert prevents duplicates under concurrent load
+
+Reply with one:
+1. **approve** — proceed with fix
+2. **revise** — <feedback>
+3. **stop** — save assessment, do not fix
+```
+
+**User says: approve**
 
 ---
 
-### Phase 4: Fix Decomposition
+### Phase 4: Fix
 
-```bash
-br create "Fix: Prevent duplicate orders with upsert" -t bug -p 1
-```
+Agent implements directly:
 
 **Fix**:
 
@@ -501,8 +573,8 @@ What type of bug?
      │
      ▼
 Complex fix?
-├── Yes → Multiple beads with deps
-└── No → Single bead with test
+├── Yes → Fix multiple files sequentially
+└── No → Single file fix with test
      │
      ▼
 Fix works?
